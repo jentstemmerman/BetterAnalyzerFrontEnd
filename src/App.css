@@ -105,6 +105,38 @@
   background: color-mix(in srgb, var(--accent) 30%, var(--bg));
 }
 
+/* Remove (X) icon inside highlight buttons */
+.remove-highlight-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--danger) 85%, var(--bg));
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  box-shadow: 0 0 0 0 transparent;
+  margin-left: auto; /* push to far right within button */
+}
+.remove-highlight-icon:hover {
+  background: var(--danger);
+  transform: scale(1.08);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 35%, transparent);
+}
+.highlight-btn.active .remove-highlight-icon {
+  background: color-mix(in srgb, var(--danger) 80%, var(--accent));
+}
+.highlight-btn.active .remove-highlight-icon:hover {
+  background: var(--danger);
+}
+.remove-highlight-icon:active {
+  transform: scale(0.92);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 50%, transparent);
+}
+
 .editor-main {
   display: flex;
   flex: 1 1 auto;

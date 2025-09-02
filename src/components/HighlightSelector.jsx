@@ -15,31 +15,23 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreat
               color: ht.color,
               display: 'flex',
               alignItems: 'center',
-              gap: '6px'
+              gap: '8px'
             }}
             onClick={() => onToggle(ht.type)}
-            title={ht.label + (removable ? ' (click to toggle, X to remove)' : '')}
+            title={ht.label + (removable ? ' (toggle / delete)' : '')}
           >
-            <span>{ht.label}</span>
+            <span className="highlight-label">{ht.label}</span>
             {removable && (
               <span
+                className="remove-highlight-icon"
                 role="button"
                 aria-label={`Remove ${ht.label}`}
                 onClick={(e) => { e.stopPropagation(); onRemove && onRemove(ht.type); }}
-                style={{
-                  background: '#e55353',
-                  color: '#fff',
-                  borderRadius: '4px',
-                  padding: '0 6px',
-                  fontSize: '0.75rem',
-                  lineHeight: '1.1rem',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >×</span>
+              >
+                <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                  <path d="M1 1 L9 9 M9 1 L1 9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                </svg>
+              </span>
             )}
           </button>
         );
