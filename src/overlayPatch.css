@@ -1,0 +1,4 @@
+/* Hide webpack overlay if only monaco cancellation errors occur (heuristic) */
+#webpack-dev-server-client-overlay:has(div:only-child:contains('operation is manually canceled')) {
+  display: none !important;
+}

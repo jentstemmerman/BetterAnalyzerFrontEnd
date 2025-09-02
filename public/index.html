@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VibeCoded React Editor</title>
+    <link href="https://fonts.googleapis.com/css?family=Fira+Mono:400,500&display=swap" rel="stylesheet">
+    <script>
+      // Early suppression of benign Monaco cancellation rejections before WDS overlay attaches
+      (function(){
+        window.addEventListener('unhandledrejection', function(e){
+          var r = e.reason;
+            if(r && (r.type === 'cancelation' || r.name === 'Canceled' || r.message === 'Canceled' || /operation is manually canceled/i.test(r.msg||r.message))) {
+              e.preventDefault();
+              if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+              // queue microtask to remove overlay if it sneaks in
+              queueMicrotask(function(){
+                var ov = document.getElementById('webpack-dev-server-client-overlay');
+                if(ov && /canceled|cancelation/i.test(ov.textContent||'')) ov.remove();
+              });
+              // eslint-disable-next-line no-console
+              console.debug('[early-silenced] Monaco cancellation');
+            }
+        }, { capture: true });
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
