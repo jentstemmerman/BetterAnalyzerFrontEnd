@@ -8,7 +8,7 @@ function MiniMap({ content, highlights, highlightTypes }) {
   });
 
   return (
-    <div className="minimap-container">
+    <div className="minimap-container" aria-label="Document minimap">
       <div className="minimap">
         {content.map((_, idx) => {
           const type = highlightMap[idx];

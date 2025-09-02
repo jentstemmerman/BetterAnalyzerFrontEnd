@@ -131,7 +131,7 @@ function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup
   }, [monaco]);
 
   return (
-    <div className="editor-container" style={{ position: 'relative' }}>
+    <div className="editor-container" style={{ position: 'relative', height: '60vh' }}>
       {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
       {onCreateGroup && (
         <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, display: 'flex', gap: '8px' }}>
@@ -150,7 +150,7 @@ function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup
         </div>
       )}
       <MonacoEditor
-        height="60vh"
+        height="100%"
         width="100%"
         language="plaintext"
         value={value}

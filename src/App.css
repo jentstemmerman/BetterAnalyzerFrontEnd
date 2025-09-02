@@ -119,24 +119,26 @@
   width: 60px;
   min-width: 60px;
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   justify-content: center;
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 2px 12px rgba(0,0,0,0.06);
-  padding: 16px 0;
+  padding: 8px 0;
   height: 60vh;
+  box-sizing: border-box;
 }
 .minimap {
   width: 24px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  flex: 1;
 }
 .minimap-line {
-  height: 6px;
+  flex: 1;
   border-radius: 2px;
-  margin-bottom: 1px;
+  min-height: 2px;
 }
 
 @media (max-width: 900px) {
