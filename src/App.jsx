@@ -38,6 +38,7 @@ function App() {
   const [docHighlights, setDocHighlights] = useState(exampleDocuments[0].highlights);
   const [groupCounter, setGroupCounter] = useState(1);
   const [theme, setTheme] = useState(() => (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  const [fontSize, setFontSize] = useState(16);
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -135,6 +136,25 @@ function App() {
           selectedIdx={selectedDocIdx}
           onSelect={handleDocumentSelect}
         />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <label style={{ fontSize: '0.85rem', color: 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>Font</span>
+            <select
+              value={fontSize}
+              onChange={e => setFontSize(parseInt(e.target.value, 10))}
+              style={{
+                padding: '6px 8px',
+                borderRadius: 6,
+                border: '1px solid var(--border)',
+                background: 'var(--bg)',
+                color: 'var(--text)',
+                fontSize: '0.85rem'
+              }}
+            >
+              {[12, 13, 14, 15, 16, 18, 20, 22, 24].map(s => <option key={s} value={s}>{s}px</option>)}
+            </select>
+          </label>
+        </div>
         <button className="analyse-btn">Analyse</button>
         <button
           className="theme-toggle-btn"
@@ -156,6 +176,7 @@ function App() {
             highlights={highlights}
             highlightTypes={highlightTypes}
             theme={theme}
+            fontSize={fontSize}
             onRegisterApi={(api) => { editorApiRef.current = api; }}
         />
         <MiniMap

@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import MonacoEditor, { useMonaco } from '@monaco-editor/react';
 
-function Editor({ content, setContent, highlights, highlightTypes, theme, onRegisterApi }) {
+function Editor({ content, setContent, highlights, highlightTypes, theme, onRegisterApi, fontSize = 16 }) {
   const value = content.join('\n');
 
   const editorRef = useRef(null);
@@ -193,7 +193,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, onRegi
         onChange={handleChange}
         options={{
           minimap: { enabled: false },
-          fontSize: 16,
+          fontSize,
           wordWrap: 'on',
           scrollBeyondLastLine: false,
         }}
