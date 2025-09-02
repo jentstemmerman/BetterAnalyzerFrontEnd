@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import './App.css';
 import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
@@ -37,6 +37,7 @@ function App() {
   const [docContent, setDocContent] = useState(exampleDocuments[0].content);
   const [docHighlights, setDocHighlights] = useState(exampleDocuments[0].highlights);
   const [groupCounter, setGroupCounter] = useState(1);
+  const [theme, setTheme] = useState(() => (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -95,6 +96,20 @@ function App() {
 
   const highlights = docHighlights.filter(h => activeHighlights.includes(h.type));
 
+  // Apply theme attribute & persist
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem('vc-theme', theme); } catch {}
+  }, [theme]);
+
+  // Load persisted theme
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('vc-theme');
+      if (saved === 'dark' || saved === 'light') setTheme(saved);
+    } catch {}
+  }, []);
+
   return (
     <div className="app-container">
       <header className="app-header">
@@ -104,6 +119,11 @@ function App() {
           onSelect={handleDocumentSelect}
         />
         <button className="analyse-btn">Analyse</button>
+        <button
+          className="theme-toggle-btn"
+          onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+          aria-label="Toggle dark mode"
+        >{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</button>
       </header>
       <HighlightSelector
         highlightTypes={highlightTypes}

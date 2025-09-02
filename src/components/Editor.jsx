@@ -130,6 +130,18 @@ function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup
     if (monaco) console.log('[monaco] ready');
   }, [monaco]);
 
+  // Switch Monaco theme when global data-theme changes
+  useEffect(() => {
+    if (!monaco || !editorRef.current) return;
+    const current = document.documentElement.getAttribute('data-theme');
+    const target = current === 'dark' ? 'vs-dark' : 'vs';
+    try {
+      monaco.editor.setTheme(target);
+    } catch (e) {
+      console.warn('Failed to set monaco theme', e);
+    }
+  }, [monaco]);
+
   return (
     <div className="editor-container" style={{ position: 'relative', height: '60vh' }}>
       {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
