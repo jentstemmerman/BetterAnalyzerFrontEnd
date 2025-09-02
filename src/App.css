@@ -57,12 +57,28 @@
   font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
+}
+.highlight-btn:hover {
+  border-color: var(--accent);
+}
+.highlight-btn:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
 }
 .highlight-btn.active {
-  background: color-mix(in srgb, var(--accent) 25%, var(--bg));
+  /* Subtle filled state with accent tint */
+  background: color-mix(in srgb, var(--accent) 32%, var(--bg));
   border-color: var(--accent);
   color: var(--accent-hover);
+
+}
+.highlight-btn.active:hover {
+  background: color-mix(in srgb, var(--accent) 42%, var(--bg));
+}
+.highlight-btn.active:active {
+  background: color-mix(in srgb, var(--accent) 55%, var(--bg));
+  box-shadow: inset 4px 0 0 0 var(--accent-hover), 0 0 0 1px color-mix(in srgb, var(--accent-hover) 55%, transparent);
 }
 
 /* Create Group button styling aligned with highlight buttons */
