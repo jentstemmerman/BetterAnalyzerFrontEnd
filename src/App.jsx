@@ -83,8 +83,11 @@ function App() {
   }, [highlightTypes]);
 
   const removeHighlightGroup = useCallback((type) => {
-    // Prevent removing base types
-    if (baseHighlightTypes.some(b => b.type === type)) return;
+    const isBase = baseHighlightTypes.some(b => b.type === type);
+    if (isBase) {
+      const confirmed = window.confirm(`Remove base highlight group "${type}"? This will delete its highlights.`);
+      if (!confirmed) return;
+    }
     setHighlightTypes(prev => prev.filter(ht => ht.type !== type));
     setActiveHighlights(prev => prev.filter(t => t !== type));
     setDocHighlights(prev => prev.filter(h => h.type !== type));
@@ -107,7 +110,6 @@ function App() {
         active={activeHighlights}
         onToggle={handleHighlightToggle}
         onRemove={removeHighlightGroup}
-        nonRemovable={baseHighlightTypes.map(b => b.type)}
       />
       <main className="editor-main">
         <Editor

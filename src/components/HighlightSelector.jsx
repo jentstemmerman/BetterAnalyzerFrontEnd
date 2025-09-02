@@ -1,44 +1,47 @@
 import React from 'react';
 
-function HighlightSelector({ highlightTypes, active, onToggle, onRemove, nonRemovable = [] }) {
+function HighlightSelector({ highlightTypes, active, onToggle, onRemove }) {
   return (
     <div className="highlight-selector">
       {highlightTypes.map(ht => {
         const isActive = active.includes(ht.type);
-        const removable = !nonRemovable.includes(ht.type);
+  const removable = true;
         return (
-          <div key={ht.type} style={{ position: 'relative', display: 'flex' }}>
-            <button
-              className={`highlight-btn${isActive ? ' active' : ''}`}
-              style={{ borderColor: ht.color, color: ht.color, paddingRight: removable ? 28 : 18 }}
-              onClick={() => onToggle(ht.type)}
-              title={ht.label + (removable ? ' (click to toggle, X to remove)' : '')}
-            >
-              {ht.label}
-            </button>
+          <button
+            key={ht.type}
+            className={`highlight-btn${isActive ? ' active' : ''}`}
+            style={{
+              borderColor: ht.color,
+              color: ht.color,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+            onClick={() => onToggle(ht.type)}
+            title={ht.label + (removable ? ' (click to toggle, X to remove)' : '')}
+          >
+            <span>{ht.label}</span>
             {removable && (
-              <button
+              <span
+                role="button"
                 aria-label={`Remove ${ht.label}`}
-                title={`Remove ${ht.label}`}
                 onClick={(e) => { e.stopPropagation(); onRemove && onRemove(ht.type); }}
                 style={{
-                  position: 'absolute',
-                  right: 4,
-                  top: 4,
-                  width: 18,
-                  height: 18,
-                  borderRadius: 4,
-                  border: 'none',
                   background: '#e55353',
                   color: '#fff',
-                  fontSize: 12,
-                  lineHeight: '18px',
+                  borderRadius: '4px',
+                  padding: '0 6px',
+                  fontSize: '0.75rem',
+                  lineHeight: '1.1rem',
                   cursor: 'pointer',
-                  padding: 0,
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
                 }}
-              >×</button>
+              >×</span>
             )}
-          </div>
+          </button>
         );
       })}
     </div>
