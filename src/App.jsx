@@ -162,6 +162,11 @@ function App() {
           content={docContent}
           highlights={highlights}
           highlightTypes={highlightTypes}
+          onNavigate={(line) => {
+            if (editorApiRef.current && editorApiRef.current.setCursorToLine) {
+              editorApiRef.current.setCursorToLine(line);
+            }
+          }}
         />
       </main>
     </div>

@@ -125,10 +125,28 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, onRegi
     return lines;
   }, []);
 
+  const setCursorToLine = useCallback((zeroBasedLine) => {
+    const editor = editorRef.current;
+    if (!editor || typeof zeroBasedLine !== 'number') return;
+    const model = editor.getModel();
+    if (!model) return;
+    const max = model.getLineCount() - 1;
+    const clamped = Math.max(0, Math.min(max, zeroBasedLine));
+    const lineNumber = clamped + 1; // monaco is 1-based
+    try {
+      editor.setSelection({ startLineNumber: lineNumber, startColumn: 1, endLineNumber: lineNumber, endColumn: 1 });
+      editor.revealLineInCenterIfOutsideViewport(lineNumber, 1 /* scrollType Smooth */);
+      editor.focus();
+    } catch (e) {
+      // non-fatal
+      console.warn('setCursorToLine failed', e);
+    }
+  }, []);
+
   // Expose lightweight API to parent (selection helpers)
   useEffect(() => {
-    if (onRegisterApi) onRegisterApi({ getSelectedLines });
-  }, [onRegisterApi, getSelectedLines]);
+    if (onRegisterApi) onRegisterApi({ getSelectedLines, setCursorToLine });
+  }, [onRegisterApi, getSelectedLines, setCursorToLine]);
 
   // Log readiness once
   useEffect(() => {
