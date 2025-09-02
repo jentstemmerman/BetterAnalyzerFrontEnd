@@ -162,7 +162,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, onRegi
   // (Theme now passed directly to MonacoEditor prop to avoid resets from options changes)
 
   return (
-    <div className="editor-container" style={{ position: 'relative', height: '60vh' }}>
+  <div className="editor-container" style={{ position: 'relative' }}>
       {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
   {/* Create Group button removed; now surfaced in HighlightSelector */}
       <MonacoEditor

@@ -8,6 +8,7 @@
   --accent: #4F8EF7;
   --accent-hover: #3466b7;
   --danger: #e55353;
+  --app-gutter: 14px; /* small aesthetic border */
 }
 
 [data-theme='dark'] {
@@ -31,5 +32,9 @@ body {
 }
 
 #root {
-  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: var(--app-gutter);
+  box-sizing: border-box;
 }
