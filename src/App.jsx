@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import './App.css';
 import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
@@ -24,7 +24,7 @@ const exampleDocuments = [
   }
 ];
 
-const highlightTypes = [
+const baseHighlightTypes = [
   { type: 'info', label: 'Info', color: '#4F8EF7' },
   { type: 'warning', label: 'Warning', color: '#F7B32B' },
   { type: 'success', label: 'Success', color: '#4FCF7F' }
@@ -32,8 +32,11 @@ const highlightTypes = [
 
 function App() {
   const [selectedDocIdx, setSelectedDocIdx] = useState(0);
-  const [activeHighlights, setActiveHighlights] = useState(highlightTypes.map(ht => ht.type));
+  const [highlightTypes, setHighlightTypes] = useState(baseHighlightTypes);
+  const [activeHighlights, setActiveHighlights] = useState(baseHighlightTypes.map(ht => ht.type));
   const [docContent, setDocContent] = useState(exampleDocuments[0].content);
+  const [docHighlights, setDocHighlights] = useState(exampleDocuments[0].highlights);
+  const [groupCounter, setGroupCounter] = useState(1);
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -45,10 +48,41 @@ function App() {
 
   const handleDocumentSelect = (idx) => {
     setSelectedDocIdx(idx);
+    // Reset to original document state when switching (custom groups not persisted across docs for now)
     setDocContent(exampleDocuments[idx].content);
+    setDocHighlights(exampleDocuments[idx].highlights);
+    setHighlightTypes(baseHighlightTypes);
+    setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
+    setGroupCounter(1);
   };
 
-  const highlights = exampleDocuments[selectedDocIdx].highlights.filter(h => activeHighlights.includes(h.type));
+  const randomPastel = () => {
+    const h = Math.floor(Math.random() * 360);
+    return `hsl(${h} 90% 80%)`;
+  };
+
+  const addHighlightGroup = useCallback((name, lines) => {
+    if (!lines || !lines.length) return;
+    // Create unique type id
+    let baseType = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'group';
+    let type = baseType;
+    let i = 1;
+    const existingTypes = new Set(highlightTypes.map(h => h.type));
+    while (existingTypes.has(type)) {
+      type = `${baseType}-${i++}`;
+    }
+    const color = randomPastel();
+    const newType = { type, label: name, color };
+    setHighlightTypes(prev => [...prev, newType]);
+    setActiveHighlights(prev => [...prev, type]);
+    setDocHighlights(prev => {
+      const currentLines = new Set(prev.filter(h => h.type === type).map(h => h.line));
+      const additions = lines.filter(l => !currentLines.has(l)).map(l => ({ line: l, type }));
+      return [...prev, ...additions];
+    });
+  }, [highlightTypes]);
+
+  const highlights = docHighlights.filter(h => activeHighlights.includes(h.type));
 
   return (
     <div className="app-container">
@@ -68,13 +102,20 @@ function App() {
       <main className="editor-main">
         <Editor
           content={docContent}
-          setContent={setDocContent}
-          highlights={highlights}
-          highlightTypes={highlightTypes}
+            setContent={setDocContent}
+            highlights={highlights}
+            highlightTypes={highlightTypes}
+            onCreateGroup={(lines) => {
+              const name = window.prompt('Name for highlight group', `Group ${groupCounter}`);
+              if (name !== null) {
+                addHighlightGroup(name.trim() || `Group ${groupCounter}`, lines);
+                setGroupCounter(c => c + 1);
+              }
+            }}
         />
         <MiniMap
           content={docContent}
-          highlights={exampleDocuments[selectedDocIdx].highlights}
+          highlights={docHighlights}
           highlightTypes={highlightTypes}
         />
       </main>

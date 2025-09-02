@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import MonacoEditor, { useMonaco } from '@monaco-editor/react';
 
-function Editor({ content, setContent, highlights, highlightTypes }) {
+function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup }) {
   const value = content.join('\n');
 
   const editorRef = useRef(null);
@@ -113,6 +113,18 @@ function Editor({ content, setContent, highlights, highlightTypes }) {
     setContent(newValue.split('\n'));
   };
 
+  const getSelectedLines = () => {
+    const editor = editorRef.current;
+    if (!editor) return [];
+    const sel = editor.getSelection();
+    if (!sel) return [];
+    const start = Math.min(sel.startLineNumber, sel.endLineNumber);
+    const end = Math.max(sel.startLineNumber, sel.endLineNumber);
+    const lines = [];
+    for (let i = start; i <= end; i++) lines.push(i - 1); // convert to 0-based
+    return lines;
+  };
+
   // Log readiness once
   useEffect(() => {
     if (monaco) console.log('[monaco] ready');
@@ -120,7 +132,23 @@ function Editor({ content, setContent, highlights, highlightTypes }) {
 
   return (
     <div className="editor-container">
-  {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
+      {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
+      {onCreateGroup && (
+        <div style={{ display: 'flex', gap: '8px', padding: '8px 12px', borderBottom: '1px solid #eee', background: '#fafbfc' }}>
+          <button
+            style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid #ccc', cursor: 'pointer', background: '#fff' }}
+            onClick={() => {
+              const lines = getSelectedLines();
+              if (!lines.length) {
+                // eslint-disable-next-line no-alert
+                alert('Select one or more lines first.');
+                return;
+              }
+              onCreateGroup(lines);
+            }}
+          >Create Highlight Group From Selection</button>
+        </div>
+      )}
       <MonacoEditor
         height="60vh"
         width="100%"
