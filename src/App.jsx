@@ -127,7 +127,7 @@ function App() {
         />
         <MiniMap
           content={docContent}
-          highlights={docHighlights}
+          highlights={highlights}
           highlightTypes={highlightTypes}
         />
       </main>
