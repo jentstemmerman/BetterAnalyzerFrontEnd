@@ -131,12 +131,12 @@ function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup
   }, [monaco]);
 
   return (
-    <div className="editor-container">
+    <div className="editor-container" style={{ position: 'relative' }}>
       {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
       {onCreateGroup && (
-        <div style={{ display: 'flex', gap: '8px', padding: '8px 12px', borderBottom: '1px solid #eee', background: '#fafbfc' }}>
+        <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, display: 'flex', gap: '8px' }}>
           <button
-            style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid #ccc', cursor: 'pointer', background: '#fff' }}
+            style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid #ccc', cursor: 'pointer', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.15)' }}
             onClick={() => {
               const lines = getSelectedLines();
               if (!lines.length) {
@@ -146,7 +146,7 @@ function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup
               }
               onCreateGroup(lines);
             }}
-          >Create Highlight Group From Selection</button>
+          >Create Group</button>
         </div>
       )}
       <MonacoEditor
