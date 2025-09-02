@@ -110,6 +110,23 @@ function App() {
     } catch {}
   }, []);
 
+  const editorApiRef = React.useRef(null);
+
+  const handleCreateGroupFromSelection = () => {
+    const api = editorApiRef.current;
+    if (!api) return;
+    const lines = api.getSelectedLines();
+    if (!lines.length) {
+      alert('Select one or more lines in the editor first.');
+      return;
+    }
+    const name = window.prompt('Name for highlight group', `Group ${groupCounter}`);
+    if (name !== null) {
+      addHighlightGroup(name.trim() || `Group ${groupCounter}`, lines);
+      setGroupCounter(c => c + 1);
+    }
+  };
+
   return (
     <div className="app-container">
       <header className="app-header">
@@ -130,6 +147,7 @@ function App() {
         active={activeHighlights}
         onToggle={handleHighlightToggle}
         onRemove={removeHighlightGroup}
+        onCreateGroup={handleCreateGroupFromSelection}
       />
       <main className="editor-main">
         <Editor
@@ -137,13 +155,8 @@ function App() {
             setContent={setDocContent}
             highlights={highlights}
             highlightTypes={highlightTypes}
-            onCreateGroup={(lines) => {
-              const name = window.prompt('Name for highlight group', `Group ${groupCounter}`);
-              if (name !== null) {
-                addHighlightGroup(name.trim() || `Group ${groupCounter}`, lines);
-                setGroupCounter(c => c + 1);
-              }
-            }}
+            theme={theme}
+            onRegisterApi={(api) => { editorApiRef.current = api; }}
         />
         <MiniMap
           content={docContent}

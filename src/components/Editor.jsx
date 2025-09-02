@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import MonacoEditor, { useMonaco } from '@monaco-editor/react';
 
-function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup, theme }) {
+function Editor({ content, setContent, highlights, highlightTypes, theme, onRegisterApi }) {
   const value = content.join('\n');
 
   const editorRef = useRef(null);
@@ -113,7 +113,7 @@ function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup
     setContent(newValue.split('\n'));
   };
 
-  const getSelectedLines = () => {
+  const getSelectedLines = useCallback(() => {
     const editor = editorRef.current;
     if (!editor) return [];
     const sel = editor.getSelection();
@@ -123,7 +123,12 @@ function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup
     const lines = [];
     for (let i = start; i <= end; i++) lines.push(i - 1); // convert to 0-based
     return lines;
-  };
+  }, []);
+
+  // Expose lightweight API to parent (selection helpers)
+  useEffect(() => {
+    if (onRegisterApi) onRegisterApi({ getSelectedLines });
+  }, [onRegisterApi, getSelectedLines]);
 
   // Log readiness once
   useEffect(() => {
@@ -149,56 +154,30 @@ function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup
         rules: [],
         colors: { 'editor.background': '#ffffff' }
       });
+    // Immediately apply current theme after (re)definition
+    monaco.editor.setTheme(theme === 'dark' ? 'vc-dark' : 'vc-light');
     } catch (e) { console.warn('defineTheme init failed', e); }
-  }, [monaco]);
-
-  // Apply theme on each toggle with forced reapply fallback
-  useEffect(() => {
-    if (!monaco) return;
-    const target = theme === 'dark' ? 'vc-dark' : 'vc-light';
-    try { monaco.editor.setTheme(target); } catch (e) { console.warn('setTheme failed', e); }
-    // Fallback reapply next frame (Monaco can ignore immediate setTheme during layout)
-    const raf = requestAnimationFrame(() => {
-      try { monaco.editor.setTheme(target); } catch {}
-    });
-    const to = setTimeout(() => {
-      try { monaco.editor.setTheme(target); } catch {}
-    }, 150);
-    return () => { cancelAnimationFrame(raf); clearTimeout(to); };
   }, [monaco, theme]);
+
+  // (Theme now passed directly to MonacoEditor prop to avoid resets from options changes)
 
   return (
     <div className="editor-container" style={{ position: 'relative', height: '60vh' }}>
       {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
-      {onCreateGroup && (
-        <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, display: 'flex', gap: '8px' }}>
-          <button
-            style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid #ccc', cursor: 'pointer', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.15)' }}
-            onClick={() => {
-              const lines = getSelectedLines();
-              if (!lines.length) {
-                // eslint-disable-next-line no-alert
-                alert('Select one or more lines first.');
-                return;
-              }
-              onCreateGroup(lines);
-            }}
-          >Create Group</button>
-        </div>
-      )}
+  {/* Create Group button removed; now surfaced in HighlightSelector */}
       <MonacoEditor
-        key={theme} /* force re-render to ensure background updates */
+        key={theme}
         height="100%"
         width="100%"
         language="plaintext"
         value={value}
+        theme={theme === 'dark' ? 'vc-dark' : 'vc-light'}
         onChange={handleChange}
         options={{
           minimap: { enabled: false },
           fontSize: 16,
           wordWrap: 'on',
           scrollBeyondLastLine: false,
-          theme: 'vs',
         }}
         onMount={handleEditorDidMount}
       />

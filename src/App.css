@@ -65,6 +65,30 @@
   color: var(--accent-hover);
 }
 
+/* Create Group button styling aligned with highlight buttons */
+.create-group-btn {
+  padding: 6px 18px;
+  border-radius: 6px;
+  border: 2px dashed var(--accent);
+  background: var(--bg-alt);
+  color: var(--accent);
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.create-group-btn:hover {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  border-color: var(--accent-hover);
+  color: var(--accent-hover);
+}
+.create-group-btn:active {
+  background: color-mix(in srgb, var(--accent) 30%, var(--bg));
+}
+
 .editor-main {
   display: flex;
   flex: 1;

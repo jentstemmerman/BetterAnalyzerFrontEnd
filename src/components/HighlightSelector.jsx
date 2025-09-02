@@ -1,6 +1,6 @@
 import React from 'react';
 
-function HighlightSelector({ highlightTypes, active, onToggle, onRemove }) {
+function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreateGroup }) {
   return (
     <div className="highlight-selector">
       {highlightTypes.map(ht => {
@@ -44,6 +44,13 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove }) {
           </button>
         );
       })}
+      {onCreateGroup && (
+        <button
+          className="create-group-btn"
+          onClick={onCreateGroup}
+          title="Create a new highlight group from the current selection"
+        >+ Create Group</button>
+      )}
     </div>
   );
 }
