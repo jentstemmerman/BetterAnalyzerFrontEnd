@@ -14,7 +14,7 @@ function MiniMap({ content, highlights, highlightTypes }) {
           const type = highlightMap[idx];
           const style = type
             ? { background: highlightTypes.find(ht => ht.type === type).color, opacity: 0.7 }
-            : { background: '#eee', opacity: 0.3 };
+            : { background: 'var(--border)', opacity: 0.25 };
           return <div key={idx} className="minimap-line" style={style} />;
         })}
       </div>

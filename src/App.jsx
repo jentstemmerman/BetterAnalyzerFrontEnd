@@ -14,7 +14,7 @@ const exampleDocuments = [
       'Some lines are highlighted.',
       'Try toggling highlight buttons above.',
       'The minimap shows all highlights.',
-      'Enjoy your professional editor!'
+      'Enjoy your professional editor!',
     ],
     highlights: [
       { line: 2, type: 'info' },
