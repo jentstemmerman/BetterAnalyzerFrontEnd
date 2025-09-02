@@ -82,6 +82,14 @@ function App() {
     });
   }, [highlightTypes]);
 
+  const removeHighlightGroup = useCallback((type) => {
+    // Prevent removing base types
+    if (baseHighlightTypes.some(b => b.type === type)) return;
+    setHighlightTypes(prev => prev.filter(ht => ht.type !== type));
+    setActiveHighlights(prev => prev.filter(t => t !== type));
+    setDocHighlights(prev => prev.filter(h => h.type !== type));
+  }, []);
+
   const highlights = docHighlights.filter(h => activeHighlights.includes(h.type));
 
   return (
@@ -98,6 +106,8 @@ function App() {
         highlightTypes={highlightTypes}
         active={activeHighlights}
         onToggle={handleHighlightToggle}
+        onRemove={removeHighlightGroup}
+        nonRemovable={baseHighlightTypes.map(b => b.type)}
       />
       <main className="editor-main">
         <Editor
