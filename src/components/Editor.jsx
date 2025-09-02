@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import MonacoEditor, { useMonaco } from '@monaco-editor/react';
 
-function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup }) {
+function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup, theme }) {
   const value = content.join('\n');
 
   const editorRef = useRef(null);
@@ -130,17 +130,42 @@ function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup
     if (monaco) console.log('[monaco] ready');
   }, [monaco]);
 
-  // Switch Monaco theme when global data-theme changes
+  // Define both themes once when monaco ready
   useEffect(() => {
-    if (!monaco || !editorRef.current) return;
-    const current = document.documentElement.getAttribute('data-theme');
-    const target = current === 'dark' ? 'vs-dark' : 'vs';
+    if (!monaco) return;
     try {
-      monaco.editor.setTheme(target);
-    } catch (e) {
-      console.warn('Failed to set monaco theme', e);
-    }
+      monaco.editor.defineTheme('vc-dark', {
+        base: 'vs-dark', inherit: true,
+        rules: [{ token: '', foreground: 'e6edf3' }],
+        colors: {
+          'editor.background': '#1c252c',
+          'editorLineNumber.foreground': '#526170',
+          'editorLineNumber.activeForeground': '#9db2c3',
+          'editor.selectionBackground': '#264f78',
+        }
+      });
+      monaco.editor.defineTheme('vc-light', {
+        base: 'vs', inherit: true,
+        rules: [],
+        colors: { 'editor.background': '#ffffff' }
+      });
+    } catch (e) { console.warn('defineTheme init failed', e); }
   }, [monaco]);
+
+  // Apply theme on each toggle with forced reapply fallback
+  useEffect(() => {
+    if (!monaco) return;
+    const target = theme === 'dark' ? 'vc-dark' : 'vc-light';
+    try { monaco.editor.setTheme(target); } catch (e) { console.warn('setTheme failed', e); }
+    // Fallback reapply next frame (Monaco can ignore immediate setTheme during layout)
+    const raf = requestAnimationFrame(() => {
+      try { monaco.editor.setTheme(target); } catch {}
+    });
+    const to = setTimeout(() => {
+      try { monaco.editor.setTheme(target); } catch {}
+    }, 150);
+    return () => { cancelAnimationFrame(raf); clearTimeout(to); };
+  }, [monaco, theme]);
 
   return (
     <div className="editor-container" style={{ position: 'relative', height: '60vh' }}>
@@ -162,6 +187,7 @@ function Editor({ content, setContent, highlights, highlightTypes, onCreateGroup
         </div>
       )}
       <MonacoEditor
+        key={theme} /* force re-render to ensure background updates */
         height="100%"
         width="100%"
         language="plaintext"
