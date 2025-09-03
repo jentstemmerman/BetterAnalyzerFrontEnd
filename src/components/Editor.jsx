@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import MonacoEditor, { useMonaco } from '@monaco-editor/react';
 
-function Editor({ content, setContent, highlights, highlightTypes, theme, onRegisterApi, fontSize = 16 }) {
+function Editor({ content, setContent, highlights, highlightTypes, theme, fontSize = 16, onRegisterApi }) {
   const value = content.join('\n');
 
   const editorRef = useRef(null);
@@ -14,6 +14,8 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, onRegi
     try {
       console.log('Editor Mounted:', editor);
       editorRef.current = editor;
+      // reset decoration ids on fresh mount to avoid stale references
+      setDecorationIds([]);
       if (monaco) updateDecorations('mount');
     } catch (e) {
       console.error('[handleEditorDidMount] error', e);
@@ -31,6 +33,11 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, onRegi
       const valid = highlights.filter(h => Number.isInteger(h.line) && h.line >= 0 && h.line < lineCount);
       if (valid.length !== highlights.length) {
         console.warn('[decorations] filtered invalid highlights', { original: highlights, valid, lineCount });
+      }
+      if (!valid.length) {
+        // clear any previous decorations explicitly
+        setDecorationIds(prev => editor.deltaDecorations(prev, []));
+        return;
       }
       const decorations = valid.map(h => {
         const lineNumber = h.line + 1;
@@ -53,7 +60,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, onRegi
       const serialized = e && e.message ? e.message : JSON.stringify(e);
       console.error('[decorations] error', serialized, e);
     }
-  }, [monaco, highlights]);
+  }, [monaco, highlights, highlightTypes]);
 
   // Unified decorations scheduler effect
   useEffect(() => {
@@ -72,7 +79,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, onRegi
         clearTimeout(scheduleRef.current.to);
       }
     };
-  }, [monaco, highlights, content, updateDecorations]);
+  }, [monaco, highlights, content, highlightTypes, updateDecorations]);
 
   // Inject highlight styles for each highlight type (once per mount / types change)
   useEffect(() => {
@@ -177,6 +184,17 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, onRegi
     } catch (e) { console.warn('defineTheme init failed', e); }
   }, [monaco, theme]);
 
+  // Dynamically apply font size changes
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    try {
+      editor.updateOptions({ fontSize });
+    } catch (e) {
+      console.warn('fontSize update failed', e);
+    }
+  }, [fontSize]);
+
   // (Theme now passed directly to MonacoEditor prop to avoid resets from options changes)
 
   return (
@@ -193,7 +211,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, onRegi
         onChange={handleChange}
         options={{
           minimap: { enabled: false },
-          fontSize,
+          fontSize: fontSize,
           wordWrap: 'on',
           scrollBeyondLastLine: false,
         }}

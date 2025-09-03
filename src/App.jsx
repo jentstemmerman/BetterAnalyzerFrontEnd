@@ -39,6 +39,7 @@ function App() {
   const [groupCounter, setGroupCounter] = useState(1);
   const [theme, setTheme] = useState(() => (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   const [fontSize, setFontSize] = useState(16);
+  const [showColorManager, setShowColorManager] = useState(false);
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -58,9 +59,27 @@ function App() {
     setGroupCounter(1);
   };
 
+  // Generate a pastel HEX color (so it works with <input type="color">)
   const randomPastel = () => {
-    const h = Math.floor(Math.random() * 360);
-    return `hsl(${h} 90% 80%)`;
+    const h = Math.random(); // 0..1
+    const s = 0.55; // moderate saturation
+    const l = 0.72; // lightness
+    const hue = h * 6;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((hue % 2) - 1));
+    const m = l - c / 2;
+    let r = 0, g = 0, b = 0;
+    if (hue >= 0 && hue < 1) { r = c; g = x; }
+    else if (hue >= 1 && hue < 2) { r = x; g = c; }
+    else if (hue >= 2 && hue < 3) { g = c; b = x; }
+    else if (hue >= 3 && hue < 4) { g = x; b = c; }
+    else if (hue >= 4 && hue < 5) { r = x; b = c; }
+    else { r = c; b = x; }
+    const toHex = (v) => {
+      const hv = Math.round((v + m) * 255).toString(16).padStart(2, '0');
+      return hv;
+    };
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
   };
 
   const addHighlightGroup = useCallback((name, lines) => {
@@ -93,6 +112,17 @@ function App() {
     setHighlightTypes(prev => prev.filter(ht => ht.type !== type));
     setActiveHighlights(prev => prev.filter(t => t !== type));
     setDocHighlights(prev => prev.filter(h => h.type !== type));
+  }, []);
+
+  const updateHighlightColor = useCallback((type, color) => {
+    // Basic hex normalization (#RRGGBB only)
+    let c = color.trim();
+    if (/^#[0-9a-fA-F]{3}$/.test(c)) {
+      // expand shorthand
+      c = '#' + c.slice(1).split('').map(ch => ch + ch).join('');
+    }
+    if (!/^#[0-9a-fA-F]{6}$/.test(c)) return; // ignore invalid
+    setHighlightTypes(prev => prev.map(ht => ht.type === type ? { ...ht, color: c } : ht));
   }, []);
 
   const highlights = docHighlights.filter(h => activeHighlights.includes(h.type));
@@ -168,7 +198,36 @@ function App() {
         onToggle={handleHighlightToggle}
         onRemove={removeHighlightGroup}
         onCreateGroup={handleCreateGroupFromSelection}
+        showColorManager={showColorManager}
+        onToggleColors={() => setShowColorManager(v => !v)}
       />
+      {showColorManager && (
+        <section className="color-manager-panel">
+          <div className="color-manager-inner">
+            <h4>Highlight Colors</h4>
+            <ul>
+              {highlightTypes.map(ht => (
+                <li key={ht.type} className="color-row">
+                  <span className="color-label">{ht.label}</span>
+                  <input
+                    type="color"
+                    className="color-input"
+                    value={/^#[0-9a-fA-F]{6}$/.test(ht.color) ? ht.color : '#cccccc'}
+                    title={`Pick color for ${ht.label}`}
+                    onChange={(e) => updateHighlightColor(ht.type, e.target.value)}
+                  />
+                  <input
+                    className="color-text-input"
+                    value={ht.color}
+                    aria-label={`Color hex for ${ht.label}`}
+                    onChange={(e) => updateHighlightColor(ht.type, e.target.value)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+      )}
       <main className="editor-main">
         <Editor
           content={docContent}
