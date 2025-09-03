@@ -162,49 +162,53 @@ function App() {
   return (
     <div className="app-container">
       <header className="app-header">
-        <DocumentSelector
-          documents={exampleDocuments}
-          selectedIdx={selectedDocIdx}
-          onSelect={handleDocumentSelect}
-        />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <label style={{ fontSize: '0.85rem', color: 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span>Font</span>
-            <select
-              value={fontSize}
-              onChange={e => setFontSize(parseInt(e.target.value, 10))}
-              style={{
-                padding: '6px 8px',
-                borderRadius: 6,
-                border: '1px solid var(--border)',
-                background: 'var(--bg)',
-                color: 'var(--text)',
-                fontSize: '0.85rem'
-              }}
-            >
-              {[12, 13, 14, 15, 16, 18, 20, 22, 24].map(s => <option key={s} value={s}>{s}px</option>)}
-            </select>
-          </label>
+        <div className="layout-row">
+          <DocumentSelector
+            documents={exampleDocuments}
+            selectedIdx={selectedDocIdx}
+            onSelect={handleDocumentSelect}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <label style={{ fontSize: '0.85rem', color: 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>Font</span>
+              <select
+                value={fontSize}
+                onChange={e => setFontSize(parseInt(e.target.value, 10))}
+                style={{
+                  padding: '6px 8px',
+                  borderRadius: 6,
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg)',
+                  color: 'var(--text)',
+                  fontSize: '0.85rem'
+                }}
+              >
+                {[12, 13, 14, 15, 16, 18, 20, 22, 24].map(s => <option key={s} value={s}>{s}px</option>)}
+              </select>
+            </label>
+          </div>
+          <button className="analyse-btn">Analyse</button>
+          <button
+            className="theme-toggle-btn"
+            onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+            aria-label="Toggle dark mode"
+          >{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</button>
         </div>
-        <button className="analyse-btn">Analyse</button>
-        <button
-          className="theme-toggle-btn"
-          onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-          aria-label="Toggle dark mode"
-        >{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</button>
       </header>
-      <HighlightSelector
-        highlightTypes={highlightTypes}
-        active={activeHighlights}
-        onToggle={handleHighlightToggle}
-        onRemove={removeHighlightGroup}
-        onCreateGroup={handleCreateGroupFromSelection}
-        showColorManager={showColorManager}
-        onToggleColors={() => setShowColorManager(v => !v)}
-      />
+      <div className="highlight-selector-wrapper layout-row">
+        <HighlightSelector
+          highlightTypes={highlightTypes}
+          active={activeHighlights}
+          onToggle={handleHighlightToggle}
+          onRemove={removeHighlightGroup}
+          onCreateGroup={handleCreateGroupFromSelection}
+          showColorManager={showColorManager}
+          onToggleColors={() => setShowColorManager(v => !v)}
+        />
+      </div>
       {showColorManager && (
         <section className="color-manager-panel">
-          <div className="color-manager-inner">
+          <div className="color-manager-inner layout-row">
             <h4>Highlight Colors</h4>
             <ul>
               {highlightTypes.map(ht => (
@@ -229,28 +233,31 @@ function App() {
           </div>
         </section>
       )}
-      <main className="editor-main">
-        <Editor
-          content={docContent}
-            setContent={setDocContent}
+    <main className="editor-main">
+  <div className="layout-row" style={{ alignItems: 'stretch', gap: '3px' }}>
+          <Editor
+            content={docContent}
+              setContent={setDocContent}
+              highlights={highlights}
+              highlightTypes={highlightTypes}
+              theme={theme}
+              fontSize={fontSize}
+              onRegisterApi={(api) => { editorApiRef.current = api; }}
+          />
+          <MiniMap
+            content={docContent}
             highlights={highlights}
             highlightTypes={highlightTypes}
+            width={minimapWidth}
+            onResizeWidth={setMinimapWidth}
             theme={theme}
-            fontSize={fontSize}
-            onRegisterApi={(api) => { editorApiRef.current = api; }}
-        />
-        <MiniMap
-          content={docContent}
-          highlights={highlights}
-          highlightTypes={highlightTypes}
-          width={minimapWidth}
-          onResizeWidth={setMinimapWidth}
-          onNavigate={(line) => {
-            if (editorApiRef.current && editorApiRef.current.setCursorToLine) {
-              editorApiRef.current.setCursorToLine(line);
-            }
-          }}
-        />
+            onNavigate={(line) => {
+              if (editorApiRef.current && editorApiRef.current.setCursorToLine) {
+                editorApiRef.current.setCursorToLine(line);
+              }
+            }}
+          />
+        </div>
       </main>
     </div>
   );

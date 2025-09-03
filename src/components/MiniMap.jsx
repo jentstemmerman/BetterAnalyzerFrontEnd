@@ -3,7 +3,7 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 const MIN_MINIMAP_WIDTH = 12; // even slimmer
 const MAX_MINIMAP_WIDTH = 240; // allow a bit wider if user wants
 
-function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 60, onResizeWidth }) {
+function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 60, onResizeWidth, theme }) {
   // Map line numbers to highlight type
   const highlightMap = {};
   highlights.forEach(h => {
@@ -55,7 +55,9 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 60, 
       <div className="minimap minimap-abs" style={{ width: '100%', position: 'relative' }}>
         {content.map((_, idx) => {
           const type = highlightMap[idx];
-          const baseColor = type ? highlightTypes.find(ht => ht.type === type).color : 'var(--border)';
+          const baseColor = type
+            ? highlightTypes.find(ht => ht.type === type).color
+            : (theme === 'light' ? '#ffffff' : 'var(--border)');
           const topPct = (idx / lineCount) * 100;
           const heightPct = (1 / lineCount) * 100;
           return (
