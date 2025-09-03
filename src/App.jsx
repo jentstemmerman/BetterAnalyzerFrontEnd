@@ -40,7 +40,7 @@ function App() {
   const [theme, setTheme] = useState(() => (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   const [fontSize, setFontSize] = useState(16);
   const [showColorManager, setShowColorManager] = useState(false);
-  const [minimapWidth, setMinimapWidth] = useState(60);
+  const [minimapWidth, setMinimapWidth] = useState(15);
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>

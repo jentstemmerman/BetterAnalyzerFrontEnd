@@ -3,7 +3,7 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 const MIN_MINIMAP_WIDTH = 12; // even slimmer
 const MAX_MINIMAP_WIDTH = 240; // allow a bit wider if user wants
 
-function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 60, onResizeWidth, theme }) {
+function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, onResizeWidth, theme }) {
   // Map line numbers to highlight type
   const highlightMap = {};
   highlights.forEach(h => {
@@ -21,7 +21,11 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 60, 
     const d = dragRef.current;
     if (!d.active) return;
     const delta = e.clientX - d.startX;
-    const newW = Math.min(MAX_MINIMAP_WIDTH, Math.max(MIN_MINIMAP_WIDTH, d.startWidth + delta));
+    // Handle is on LEFT edge: moving mouse left (delta negative) should INCREASE width.
+    const newW = Math.min(
+      MAX_MINIMAP_WIDTH,
+      Math.max(MIN_MINIMAP_WIDTH, d.startWidth - delta)
+    );
     setInternalWidth(newW);
     if (onResizeWidth) onResizeWidth(newW);
   }, [onResizeWidth]);
@@ -52,7 +56,23 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 60, 
       ref={containerRef}
       style={{ width: internalWidth, minWidth: internalWidth }}
     >
-      <div className="minimap minimap-abs" style={{ width: '100%', position: 'relative' }}>
+      {/* Resize handle moved to LEFT side */}
+      <div
+        className="minimap-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize minimap"
+        tabIndex={0}
+        onMouseDown={startDrag}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft') { // expand (move edge left)
+            const nw = Math.min(MAX_MINIMAP_WIDTH, internalWidth + 5); setInternalWidth(nw); onResizeWidth && onResizeWidth(nw);
+          } else if (e.key === 'ArrowRight') { // contract (move edge right)
+            const nw = Math.max(MIN_MINIMAP_WIDTH, internalWidth - 5); setInternalWidth(nw); onResizeWidth && onResizeWidth(nw);
+          }
+        }}
+      />
+      <div className="minimap minimap-abs" style={{ flex: '1 1 auto', position: 'relative' }}>
         {content.map((_, idx) => {
           const type = highlightMap[idx];
           const baseColor = type
@@ -87,22 +107,7 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 60, 
             />
           );
         })}
-      </div>
-      <div
-        className="minimap-resize-handle"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize minimap"
-        tabIndex={0}
-        onMouseDown={startDrag}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowLeft') {
-            const nw = Math.max(MIN_MINIMAP_WIDTH, internalWidth - 5); setInternalWidth(nw); onResizeWidth && onResizeWidth(nw);
-          } else if (e.key === 'ArrowRight') {
-            const nw = Math.min(MAX_MINIMAP_WIDTH, internalWidth + 5); setInternalWidth(nw); onResizeWidth && onResizeWidth(nw);
-          }
-        }}
-      />
+  </div>
     </div>
   );
 }
