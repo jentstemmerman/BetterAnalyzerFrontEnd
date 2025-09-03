@@ -194,7 +194,7 @@
 
 .minimap-container {
   width: 60px;
-  min-width: 60px;
+  min-width: 12px;
   display: flex;
   align-items: stretch;
   justify-content: center;
@@ -206,16 +206,32 @@
   min-height: 60vh; /* align with editor height */
   box-sizing: border-box;
 }
+.minimap-resize-handle {
+  width: 6px;
+  cursor: col-resize;
+  align-self: stretch;
+  background: linear-gradient(to right, transparent 0%, color-mix(in srgb,var(--accent) 35%, transparent) 50%, transparent 100%);
+  margin-left: 6px;
+  border-radius: 4px;
+  position: relative;
+}
+.minimap-resize-handle:hover, .minimap-resize-handle:focus-visible {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  outline: none;
+}
+.minimap-resize-handle:active {
+  background: color-mix(in srgb, var(--accent) 65%, transparent);
+}
 .minimap {
-  width: 24px;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 0; /* remove gaps that appeared as dividers */
-  flex: 1;
+  gap: 0;
+  flex: 1 1 auto;
 }
 .minimap-line {
-  flex: 1;
-  border-radius: 0; /* contiguous blocks */
+  flex: 1 1 auto;
+  border-radius: 0;
   min-height: 2px;
   cursor: pointer;
 }

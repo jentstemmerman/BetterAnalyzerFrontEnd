@@ -1,15 +1,57 @@
-import React from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 
-function MiniMap({ content, highlights, highlightTypes, onNavigate }) {
+const MIN_MINIMAP_WIDTH = 12; // even slimmer
+const MAX_MINIMAP_WIDTH = 240; // allow a bit wider if user wants
+
+function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 60, onResizeWidth }) {
   // Map line numbers to highlight type
   const highlightMap = {};
   highlights.forEach(h => {
     highlightMap[h.line] = h.type;
   });
 
+  const containerRef = useRef(null);
+  const dragRef = useRef({ active: false, startX: 0, startWidth: width });
+  const [internalWidth, setInternalWidth] = useState(width);
+
+  // Sync external width prop to internal state
+  useEffect(() => { setInternalWidth(width); }, [width]);
+
+  const onMouseMove = useCallback((e) => {
+    const d = dragRef.current;
+    if (!d.active) return;
+    const delta = e.clientX - d.startX;
+    const newW = Math.min(MAX_MINIMAP_WIDTH, Math.max(MIN_MINIMAP_WIDTH, d.startWidth + delta));
+    setInternalWidth(newW);
+    if (onResizeWidth) onResizeWidth(newW);
+  }, [onResizeWidth]);
+
+  const endDrag = useCallback(() => {
+    dragRef.current.active = false;
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', endDrag);
+  }, [onMouseMove]);
+
+  const startDrag = (e) => {
+    dragRef.current = { active: true, startX: e.clientX, startWidth: internalWidth };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', endDrag);
+    e.preventDefault();
+  };
+
+  useEffect(() => () => { // cleanup on unmount
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', endDrag);
+  }, [onMouseMove, endDrag]);
+
   return (
-    <div className="minimap-container" aria-label="Document minimap">
-      <div className="minimap">
+    <div
+      className="minimap-container"
+      aria-label="Document minimap"
+      ref={containerRef}
+      style={{ width: internalWidth, minWidth: internalWidth, padding: internalWidth < 32 ? '4px 0' : '8px 0' }}
+    >
+      <div className="minimap" style={{ width: '100%' }}>
         {content.map((_, idx) => {
           const type = highlightMap[idx];
           const style = type
@@ -35,6 +77,21 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate }) {
           );
         })}
       </div>
+      <div
+        className="minimap-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize minimap"
+        tabIndex={0}
+        onMouseDown={startDrag}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft') {
+            const nw = Math.max(MIN_MINIMAP_WIDTH, internalWidth - 5); setInternalWidth(nw); onResizeWidth && onResizeWidth(nw);
+          } else if (e.key === 'ArrowRight') {
+            const nw = Math.min(MAX_MINIMAP_WIDTH, internalWidth + 5); setInternalWidth(nw); onResizeWidth && onResizeWidth(nw);
+          }
+        }}
+      />
     </div>
   );
 }

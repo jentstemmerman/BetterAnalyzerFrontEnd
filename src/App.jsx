@@ -40,6 +40,7 @@ function App() {
   const [theme, setTheme] = useState(() => (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   const [fontSize, setFontSize] = useState(16);
   const [showColorManager, setShowColorManager] = useState(false);
+  const [minimapWidth, setMinimapWidth] = useState(60);
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -242,6 +243,8 @@ function App() {
           content={docContent}
           highlights={highlights}
           highlightTypes={highlightTypes}
+          width={minimapWidth}
+          onResizeWidth={setMinimapWidth}
           onNavigate={(line) => {
             if (editorApiRef.current && editorApiRef.current.setCursorToLine) {
               editorApiRef.current.setCursorToLine(line);
