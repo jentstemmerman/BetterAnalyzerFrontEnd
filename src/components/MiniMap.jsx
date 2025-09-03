@@ -44,24 +44,33 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 60, 
     window.removeEventListener('mouseup', endDrag);
   }, [onMouseMove, endDrag]);
 
+  const lineCount = content.length || 1;
   return (
     <div
       className="minimap-container"
       aria-label="Document minimap"
       ref={containerRef}
-      style={{ width: internalWidth, minWidth: internalWidth, padding: internalWidth < 32 ? '4px 0' : '8px 0' }}
+      style={{ width: internalWidth, minWidth: internalWidth }}
     >
-      <div className="minimap" style={{ width: '100%' }}>
+      <div className="minimap minimap-abs" style={{ width: '100%', position: 'relative' }}>
         {content.map((_, idx) => {
           const type = highlightMap[idx];
-          const style = type
-            ? { background: highlightTypes.find(ht => ht.type === type).color, opacity: 0.7 }
-            : { background: 'var(--border)', opacity: 0.25 };
+          const baseColor = type ? highlightTypes.find(ht => ht.type === type).color : 'var(--border)';
+          const topPct = (idx / lineCount) * 100;
+          const heightPct = (1 / lineCount) * 100;
           return (
             <div
               key={idx}
               className="minimap-line"
-              style={style}
+              style={{
+                position: 'absolute',
+                top: `${topPct}%`,
+                height: `${heightPct}%`,
+                left: 0,
+                right: 0,
+                background: baseColor,
+                opacity: type ? 0.7 : 0.25
+              }}
               onClick={() => onNavigate && onNavigate(idx)}
               role={onNavigate ? 'button' : undefined}
               tabIndex={onNavigate ? 0 : undefined}
