@@ -4,6 +4,7 @@ import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
 import HighlightSelector from './components/HighlightSelector';
 import DocumentSelector from './components/DocumentSelector';
+import { GetServerDirectoryListing } from './api/library';
 
 const exampleDocuments = [
   {
@@ -41,6 +42,9 @@ function App() {
   const [fontSize, setFontSize] = useState(16);
   const [showColorManager, setShowColorManager] = useState(false);
   const [minimapWidth, setMinimapWidth] = useState(15);
+  const [serverEntries, setServerEntries] = useState([]); // array of {fileName,filePath,isDirectory}
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [userId] = useState(0); // TODO: replace with real user context
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -159,15 +163,42 @@ function App() {
     }
   };
 
+  // Fetch server directory listing once on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingFiles(true);
+      const entries = await GetServerDirectoryListing(userId, '', undefined);
+      if (cancelled) return;
+      if (Array.isArray(entries) && entries.length) setServerEntries(entries);
+      setLoadingFiles(false);
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  const handleServerFileSelect = async (entry, idx) => {
+    // For now re-use example content placeholder until file fetching is implemented.
+    setSelectedDocIdx(idx);
+    setDocContent([`Selected file: ${entry.filePath}`, 'File loading not implemented yet.']);
+    setDocHighlights([]);
+    setHighlightTypes(baseHighlightTypes);
+    setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
+  };
+
   return (
     <div className="app-container">
       <header className="app-header">
         <div className="layout-row">
-          <DocumentSelector
-            documents={exampleDocuments}
-            selectedIdx={selectedDocIdx}
-            onSelect={handleDocumentSelect}
-          />
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <DocumentSelector
+              documents={exampleDocuments}
+              selectedIdx={selectedDocIdx}
+              onSelect={handleDocumentSelect}
+              serverEntries={serverEntries}
+              onSelectServer={handleServerFileSelect}
+            />
+            {loadingFiles && <span style={{ fontSize: '0.7rem', color: 'var(--text-soft)' }}>Loading…</span>}
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <label style={{ fontSize: '0.85rem', color: 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 6 }}>
               <span>Font</span>
