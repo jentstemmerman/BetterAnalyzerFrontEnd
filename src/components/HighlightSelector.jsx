@@ -37,7 +37,6 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreat
           title="Create a new highlight group from the current selection"
         >+ Create Group</button>
       )}
-      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }} />
       {onToggleColors && (
         <button
           className="toggle-colors-btn"
