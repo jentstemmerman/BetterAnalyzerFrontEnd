@@ -10,13 +10,7 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreat
           <button
             key={ht.type}
             className={`highlight-btn${isActive ? ' active' : ''}`}
-            style={{
-              borderColor: ht.color,
-              color: ht.color,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}
+            style={{ '--hl-color': ht.color }}
             onClick={() => onToggle(ht.type)}
             title={ht.label + (removable ? ' (toggle / delete)' : '')}
           >

@@ -6,7 +6,8 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
 
   const editorRef = useRef(null);
   const monaco = useMonaco();
-  const [decorationIds, setDecorationIds] = useState([]);
+  // Track current Monaco decoration IDs in a ref to avoid race conditions
+  const decorationIdsRef = useRef([]);
   const scheduleRef = useRef(null);
 
   // Store editor instance on mount
@@ -15,7 +16,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
       console.log('Editor Mounted:', editor);
       editorRef.current = editor;
       // reset decoration ids on fresh mount to avoid stale references
-      setDecorationIds([]);
+  decorationIdsRef.current = [];
       if (monaco) updateDecorations('mount');
     } catch (e) {
       console.error('[handleEditorDidMount] error', e);
@@ -34,10 +35,13 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
       if (valid.length !== highlights.length) {
         console.warn('[decorations] filtered invalid highlights', { original: highlights, valid, lineCount });
       }
+      // Always fully clear previous decorations first to prevent stale color flashes
+      if (decorationIdsRef.current.length) {
+        try { editor.deltaDecorations(decorationIdsRef.current, []); } catch {}
+        decorationIdsRef.current = [];
+      }
       if (!valid.length) {
-        // clear any previous decorations explicitly
-        setDecorationIds(prev => editor.deltaDecorations(prev, []));
-        return;
+        return; // nothing to apply
       }
       const decorations = valid.map(h => {
         const lineNumber = h.line + 1;
@@ -47,11 +51,17 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
           options: {
             isWholeLine: true,
             className: `highlight-line-${h.type}`,
-            inlineClassName: `highlight-line-${h.type}`,
+            // inlineClassName removed to avoid duplicated layered backgrounds
           }
         };
       });
-      setDecorationIds(prev => editor.deltaDecorations(prev, decorations));
+      try {
+        const newIds = editor.deltaDecorations([], decorations);
+        decorationIdsRef.current = newIds;
+      } catch (e) {
+        if (e && e.type === 'cancelation') return;
+        console.error('[decorations] delta apply failed', e);
+      }
     } catch (e) {
       if (e && e.type === 'cancelation') {
         // benign monaco cancellation (e.g., rapid updates) – ignore noisy log
@@ -114,6 +124,11 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
     }).join('\n');
     styleEl.innerHTML = css;
     if (!existing) document.head.appendChild(styleEl);
+    // force repaint by updating a data attribute on container (if present)
+    if (editorRef.current && editorRef.current.getDomNode) {
+      const dom = editorRef.current.getDomNode();
+      if (dom) dom.setAttribute('data-highlight-refresh', String(Date.now()));
+    }
   }, [highlightTypes]);
 
   const handleChange = (newValue) => {
