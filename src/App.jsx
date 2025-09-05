@@ -48,12 +48,24 @@ function App() {
   const [currentServerFile, setCurrentServerFile] = useState(null); // entry object
   const [currentServerIndex, setCurrentServerIndex] = useState(-1);
   const [fileMeta, setFileMeta] = useState(null); // { size, numberOfLines }
-  const [nextLineToLoad, setNextLineToLoad] = useState(0);
+  // Large file streaming + virtual window state
+  const [nextLineToLoad, setNextLineToLoad] = useState(0); // global next line index to request (exclusive)
   const [isLoadingLines, setIsLoadingLines] = useState(false);
-  const fileLoadIdRef = React.useRef(0);
-  const nextLineRef = React.useRef(0);
+  const fileLoadIdRef = React.useRef(0); // increments each file selection to invalidate pending loads
+  const nextLineRef = React.useRef(0); // mirrors nextLineToLoad in ref form for async usage
   const isLoadingRef = React.useRef(false);
-  const LINES_PER_CHUNK = 800;
+  const windowStartRef = React.useRef(0); // global starting line index represented by docContent[0]
+  const [windowStart, setWindowStart] = useState(0); // mirrored state for render (lineNumberOffset)
+  const lastViewportRef = React.useRef({ first: -1, last: -1 });
+  const lastGlobalLastRef = React.useRef(-1); // track previous globalLast to detect real user scroll
+  const retryMapRef = React.useRef({}); // { startLine: { attempts, nextDelayMs } }
+  const [fetchError, setFetchError] = useState(null); // { message, atLine }
+  const LINES_PER_CHUNK = 800; // fetch size from server
+  const MAX_BUFFER_LINES = 20000; // keep at most this many lines resident to avoid OOM
+  const BOTTOM_PREFETCH_MARGIN = 600; // when viewport close to bottom loaded region, fetch more
+  const TOP_PREFETCH_MARGIN = 600; // (future) allow backward paging when scrolled near top & trimmed
+  const ENABLE_BACKWARD_FETCH = false; // set true if we implement reverse fetch later
+  const PREFETCH_AHEAD = 800; // trigger another fetch when fewer than this many lines remain ahead of viewport
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -187,17 +199,19 @@ function App() {
 
   const handleServerFileSelect = async (entry, idx) => {
     setSelectedDocIdx(idx); // not used when server entries present but kept for state symmetry
-  setCurrentServerFile(entry);
-  setCurrentServerIndex(idx);
+    setCurrentServerFile(entry);
+    setCurrentServerIndex(idx);
     setDocContent([`Loading ${entry.fileName} ...`]);
     setDocHighlights([]);
     setHighlightTypes(baseHighlightTypes);
     setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
     setFileMeta(null);
-  setNextLineToLoad(0);
-  nextLineRef.current = 0;
-  fileLoadIdRef.current += 1; // invalidate previous loads
-  const loadIdSnapshot = fileLoadIdRef.current;
+    setNextLineToLoad(0);
+    nextLineRef.current = 0;
+    windowStartRef.current = 0;
+    setWindowStart(0);
+    fileLoadIdRef.current += 1; // invalidate previous loads
+    const loadIdSnapshot = fileLoadIdRef.current;
     // Fetch metadata then first chunk
     try {
       const meta = await getMetadata(entry.fileName, userId);
@@ -205,9 +219,11 @@ function App() {
         setDocContent([`Failed to load metadata for ${entry.fileName}`]);
         return;
       }
-  if (fileLoadIdRef.current !== loadIdSnapshot) return; // selection changed
+      if (fileLoadIdRef.current !== loadIdSnapshot) return; // selection changed
       setFileMeta(meta);
-  await loadMoreLines(entry.fileName, meta, loadIdSnapshot);
+      await loadMoreLines(entry.fileName, meta, loadIdSnapshot);
+      // Adaptive bootstrap: keep fetching until we have enough lines to scroll beyond viewport
+      setTimeout(() => adaptiveBootstrap(meta, entry.fileName), 20);
     } catch (e) {
       setDocContent([`Error loading file ${entry.fileName}`]);
     }
@@ -217,12 +233,14 @@ function App() {
     if (isLoadingRef.current) return; // prevent overlap
     const meta = metaOverride || fileMeta;
     if (!meta) return;
-    const start = nextLineRef.current;
-    if (start >= meta.numberOfLines) return; // done
+    const start = nextLineRef.current; // global line to start fetching
+    if (start >= meta.numberOfLines) return; // nothing left
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[prefetch] initiating fetch from', start);
+    }
     isLoadingRef.current = true;
     setIsLoadingLines(true);
-    let scheduled = false;
-    try {
+  try {
       const remaining = meta.numberOfLines - start;
       const toFetch = Math.min(LINES_PER_CHUNK, remaining);
       const res = await fetchFileLines(fileName, userId, start, meta.numberOfLines, toFetch);
@@ -234,26 +252,135 @@ function App() {
         setNextLineToLoad(meta.numberOfLines);
         return;
       }
-      setDocContent(prev => (start === 0 ? newLines : [...prev, ...newLines]));
-      const newStart = start + newLines.length;
-      nextLineRef.current = newStart;
-      setNextLineToLoad(newStart);
-      const activeLoadId = loadIdOverride ?? fileLoadIdRef.current;
-      if (newStart < meta.numberOfLines && activeLoadId === fileLoadIdRef.current) {
-        scheduled = true;
-        setTimeout(() => {
-          if (activeLoadId === fileLoadIdRef.current) {
-            loadMoreLines(fileName, meta);
+      setDocContent(prev => {
+        const combined = start === 0 ? newLines : [...prev, ...newLines];
+        // Trim head if buffer grows too large
+        if (combined.length > MAX_BUFFER_LINES) {
+          const overflow = combined.length - MAX_BUFFER_LINES;
+          const trimmed = combined.slice(overflow);
+          windowStartRef.current += overflow;
+          setWindowStart(windowStartRef.current);
+          // Adjust stored viewport (global indices shift down by overflow)
+          if (lastViewportRef.current.last !== -1) {
+            lastViewportRef.current = {
+              first: lastViewportRef.current.first + overflow,
+              last: lastViewportRef.current.last + overflow,
+            };
           }
-        }, 0);
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[virtual-window] trimmed', overflow, 'new windowStart', windowStartRef.current, 'buffer size', trimmed.length);
+          }
+          return trimmed;
+        }
+        return combined;
+      });
+      const newGlobalNext = start + newLines.length;
+      nextLineRef.current = newGlobalNext;
+      setNextLineToLoad(newGlobalNext);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[stream] fetched lines', start, '->', newGlobalNext, 'of', meta.numberOfLines);
       }
     } catch (e) {
+      const status = e?.response?.status;
       console.error('Failed to load lines', e);
+      if (status === 500) {
+        const entry = retryMapRef.current[start] || { attempts: 0, nextDelayMs: 500 };
+        entry.attempts += 1;
+        if (entry.attempts > 5) {
+          setFetchError({ message: `Server error at line ${start}. Gave up after ${entry.attempts - 1} retries.`, atLine: start });
+        } else {
+          // schedule retry with exponential backoff
+          const delay = entry.nextDelayMs;
+            entry.nextDelayMs = Math.min(entry.nextDelayMs * 2, 8000);
+          retryMapRef.current[start] = entry;
+          setTimeout(() => {
+            if (!isLoadingRef.current && fileName === currentServerFile?.fileName && nextLineRef.current === start) {
+              loadMoreLines(fileName, meta);
+            }
+          }, delay);
+        }
+      } else {
+        setFetchError({ message: `Fetch failed at line ${start}: ${e.message || 'unknown error'}`, atLine: start });
+      }
     } finally {
       isLoadingRef.current = false;
-      if (!scheduled) setIsLoadingLines(false); else setIsLoadingLines(false); // keep indicator simple
+      setIsLoadingLines(false);
+  // Bootstrap disabled (single initial chunk only); subsequent loads driven by viewport / fallback interval
     }
-  }, [fileMeta, userId]);
+  }, [fileMeta, userId, currentServerFile]);
+
+  const adaptiveBootstrap = useCallback((meta, fileName) => {
+    // Only ensure minimal scrollability once; do not chain indefinitely
+    if (!editorApiRef.current || !editorApiRef.current.getViewportInfo) return;
+    const info = editorApiRef.current.getViewportInfo();
+    if (!info) return;
+    const needLines = info.capacity + 5; // small buffer just beyond viewport
+    if (docContent.length < needLines && nextLineRef.current < meta.numberOfLines) {
+      if (!isLoadingRef.current) {
+        loadMoreLines(fileName, meta);
+      }
+    }
+  }, [docContent.length, loadMoreLines]);
+
+  // Viewport driven prefetch (bottom) & optional backward fetch (not yet enabled)
+  const handleViewportChange = useCallback(({ firstVisibleLine, lastVisibleLine, cause, capacity }) => {
+    if (!fileMeta || !currentServerFile) 
+    {
+      console.log('[handleViewportChange] not entered, fileMeta = ', fileMeta, 'currentServerFile = ', currentServerFile);
+      return;
+    }
+    else {
+      console.log('[handleViewportChange] entered');
+    }
+
+    // firstVisibleLine / lastVisibleLine already include lineNumberOffset (global indexes)
+    const globalFirst = firstVisibleLine;
+    const globalLast = lastVisibleLine;
+  lastViewportRef.current = { first: globalFirst, last: globalLast };
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[viewport]', { globalFirst, globalLast, loadedEnd: nextLineRef.current, windowStart: windowStartRef.current });
+    }
+  // Bottom prefetch (only on actual user scroll events)
+    const loadedEnd = nextLineRef.current; // exclusive
+    const cap = capacity || (lastVisibleLine - firstVisibleLine + 1) || 50;
+  const userScrolled = cause === 'scroll' && globalLast > lastGlobalLastRef.current;
+  if (userScrolled) lastGlobalLastRef.current = globalLast;
+    const distanceAhead = (loadedEnd - 1) - globalLast; // lines ahead of viewport
+    if (process.env.NODE_ENV === 'development' && cause === 'scroll') {
+      console.log('[scroll-eval]', { globalLast, loadedEnd, distanceAhead, cap, threshold: PREFETCH_AHEAD });
+    }
+    if (loadedEnd < fileMeta.numberOfLines && userScrolled && distanceAhead < PREFETCH_AHEAD) {
+      if (process.env.NODE_ENV === 'development') console.log('[prefetch-trigger] threshold');
+      loadMoreLines(currentServerFile.fileName, fileMeta);
+    }
+    // (Future) Top prefetch for backward scrolling if we trimmed
+    if (ENABLE_BACKWARD_FETCH && windowStartRef.current > 0 && (globalFirst - TOP_PREFETCH_MARGIN) <= windowStartRef.current) {
+      // TODO: implement backward fetch (prepend) logic
+    }
+  }, [fileMeta, currentServerFile, loadMoreLines]);
+
+  // Fallback: if page scrolls (outer document, not Monaco internal) and Monaco didn't emit scroll events
+  useEffect(() => {
+    if (!currentServerFile || !fileMeta) return;
+    // (Reverted) window scroll fallback removed
+  }, [currentServerFile, fileMeta, loadMoreLines]);
+  // (Reverted) polling fallback removed
+
+  // Guarded fallback interval: only active if user viewport is near bottom of loaded region
+  useEffect(() => {
+    if (!currentServerFile || !fileMeta) return;
+    const id = setInterval(() => {
+      const { last } = lastViewportRef.current;
+      if (last === -1) return; // no viewport yet
+      const loadedEnd = nextLineRef.current; // exclusive
+      if (loadedEnd >= fileMeta.numberOfLines) return; // finished
+      if (last + BOTTOM_PREFETCH_MARGIN >= loadedEnd - 1 && !isLoadingRef.current) {
+        loadMoreLines(currentServerFile.fileName, fileMeta);
+      }
+    }, 1200);
+    return () => clearInterval(id);
+  }, [currentServerFile, fileMeta, loadMoreLines]);
+  // (Removed aggressive fallback interval that caused whole-file loading). If needed later, reintroduce with a guard.
 
   return (
     <div className="app-container">
@@ -304,6 +431,26 @@ function App() {
         </div>
       </header>
       <div className="highlight-selector-wrapper layout-row">
+        {fetchError && (
+          <div style={{ background: 'var(--warning-bg, #553)', color: '#ffb', padding: '6px 10px', borderRadius: 6, fontSize: '0.75rem', display: 'flex', gap: 12, alignItems: 'center' }}>
+            <span>{fetchError.message}</span>
+            <button
+              style={{ fontSize: '0.7rem', padding: '4px 8px' }}
+              onClick={() => {
+                setFetchError(null);
+                // Retry from failed point if still selected file
+                if (currentServerFile && !isLoadingRef.current) {
+                  // ensure pointer stays at failed start
+                  if (typeof fetchError.atLine === 'number') {
+                    nextLineRef.current = fetchError.atLine;
+                    setNextLineToLoad(fetchError.atLine);
+                  }
+                  loadMoreLines(currentServerFile.fileName, fileMeta);
+                }
+              }}
+            >Retry</button>
+          </div>
+        )}
         <HighlightSelector
           highlightTypes={highlightTypes}
           active={activeHighlights}
@@ -313,6 +460,9 @@ function App() {
           showColorManager={showColorManager}
           onToggleColors={() => setShowColorManager(v => !v)}
         />
+        {process.env.NODE_ENV === 'development' && currentServerFile && fileMeta && (
+          <button style={{ marginLeft: 12, fontSize: '0.7rem' }} onClick={() => loadMoreLines(currentServerFile.fileName, fileMeta)} disabled={isLoadingLines}>Dev Load Next</button>
+        )}
       </div>
       {showColorManager && (
         <section className="color-manager-panel">
@@ -345,12 +495,19 @@ function App() {
   <div className="layout-row" style={{ alignItems: 'stretch', gap: '3px' }}>
           <Editor
             content={docContent}
-              setContent={setDocContent}
-              highlights={highlights}
-              highlightTypes={highlightTypes}
-              theme={theme}
-              fontSize={fontSize}
-              onRegisterApi={(api) => { editorApiRef.current = api; }}
+            setContent={setDocContent}
+            highlights={highlights.map(h => {
+              // Rebase highlight lines relative to current window
+              const wl = h.line - windowStart;
+              if (wl < 0 || wl >= docContent.length) return null;
+              return { ...h, line: wl };
+            }).filter(Boolean)}
+            highlightTypes={highlightTypes}
+            theme={theme}
+            fontSize={fontSize}
+            lineNumberOffset={windowStart}
+            onViewportChange={handleViewportChange}
+            onRegisterApi={(api) => { editorApiRef.current = api; }}
           />
           <MiniMap
             content={docContent}

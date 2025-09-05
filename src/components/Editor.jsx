@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import MonacoEditor, { useMonaco } from '@monaco-editor/react';
 
-function Editor({ content, setContent, highlights, highlightTypes, theme, fontSize = 16, onRegisterApi }) {
+function Editor({ content, setContent, highlights, highlightTypes, theme, fontSize = 16, onRegisterApi, lineNumberOffset = 0, onViewportChange }) {
   const value = content.join('\n');
 
   const editorRef = useRef(null);
@@ -9,15 +9,80 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
   // Track current Monaco decoration IDs in a ref to avoid race conditions
   const decorationIdsRef = useRef([]);
   const scheduleRef = useRef(null);
+  // Always use latest onViewportChange without needing to rebind Monaco listeners
+  const viewportCbRef = useRef(onViewportChange);
+  useEffect(() => { viewportCbRef.current = onViewportChange; }, [onViewportChange]);
 
-  // Store editor instance on mount
+  // Safely determine line height with multiple fallbacks (monaco option -> fontInfo -> DOM probe -> default)
+  const resolveLineHeight = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return 18;
+    try {
+      // Primary: direct lineHeight editor option (may be undefined early in lifecycle in rare race cases)
+      if (monaco?.editor?.EditorOption && monaco.editor.EditorOption.lineHeight !== undefined) {
+        const lh = editor.getOption?.(monaco.editor.EditorOption.lineHeight);
+        if (typeof lh === 'number' && lh > 0) return lh;
+      }
+      // Secondary: fontInfo lineHeight
+      if (monaco?.editor?.EditorOption && monaco.editor.EditorOption.fontInfo !== undefined) {
+        const fontInfo = editor.getOption?.(monaco.editor.EditorOption.fontInfo);
+        if (fontInfo?.lineHeight && fontInfo.lineHeight > 0) return fontInfo.lineHeight;
+      }
+      // Tertiary: Inspect first rendered line DOM element
+      const dom = editor.getDomNode?.();
+      if (dom) {
+        const lineContainer = dom.querySelector('.view-lines');
+        if (lineContainer && lineContainer.firstChild) {
+          const probe = lineContainer.firstChild;
+            // clientHeight preferred; fallback to getBoundingClientRect
+          const h = (probe.clientHeight || probe.getBoundingClientRect?.().height || 0);
+          if (h > 0) return h;
+        }
+      }
+    } catch (_) { /* swallow */ }
+    return 18; // conservative default
+  }, [monaco]);
+
+  // Store editor instance on mount + attach viewport listeners immediately
   const handleEditorDidMount = (editor) => {
     try {
       console.log('Editor Mounted:', editor);
       editorRef.current = editor;
-      // reset decoration ids on fresh mount to avoid stale references
-  decorationIdsRef.current = [];
+      decorationIdsRef.current = [];
       if (monaco) updateDecorations('mount');
+  if (viewportCbRef.current) {
+        const fire = () => {
+          try {
+            const vr = editor.getVisibleRanges();
+            if (vr && vr.length) {
+              const r = vr[0];
+      viewportCbRef.current && viewportCbRef.current({
+                firstVisibleLine: r.startLineNumber - 1 + lineNumberOffset,
+                lastVisibleLine: r.endLineNumber - 1 + lineNumberOffset,
+                cause: 'init'
+              });
+            }
+          } catch {}
+        };
+        fire();
+        editor.onDidScrollChange(() => {
+          try {
+            const vr = editor.getVisibleRanges();
+            if (vr && vr.length) {
+              const r = vr[0];
+              const lineHeight = resolveLineHeight();
+              const layout = editor.getLayoutInfo?.();
+              const capacity = layout ? Math.ceil(layout.height / lineHeight) : (r.endLineNumber - r.startLineNumber + 1);
+      viewportCbRef.current && viewportCbRef.current({
+                firstVisibleLine: r.startLineNumber - 1 + lineNumberOffset,
+                lastVisibleLine: r.endLineNumber - 1 + lineNumberOffset,
+                capacity,
+                cause: 'scroll'
+              });
+            }
+          } catch {}
+        });
+      }
     } catch (e) {
       console.error('[handleEditorDidMount] error', e);
     }
@@ -165,10 +230,41 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
     }
   }, []);
 
-  // Expose lightweight API to parent (selection helpers)
+  const getViewportInfo = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return null;
+    try {
+      const vr = editor.getVisibleRanges();
+      if (!vr || !vr.length) return null;
+      const r = vr[0];
+    const lineHeight = resolveLineHeight();
+      const layout = editor.getLayoutInfo?.();
+      const capacity = layout ? Math.ceil(layout.height / lineHeight) : (r.endLineNumber - r.startLineNumber + 1);
+      return {
+        firstVisibleLine: r.startLineNumber - 1 + lineNumberOffset,
+        lastVisibleLine: r.endLineNumber - 1 + lineNumberOffset,
+        capacity,
+      };
+    } catch {
+      return null;
+    }
+  }, [lineNumberOffset, monaco, resolveLineHeight]);
+
+  // Expose lightweight API to parent (selection helpers + viewport info)
   useEffect(() => {
-    if (onRegisterApi) onRegisterApi({ getSelectedLines, setCursorToLine });
-  }, [onRegisterApi, getSelectedLines, setCursorToLine]);
+    if (onRegisterApi) {
+      onRegisterApi({ getSelectedLines, setCursorToLine, getViewportInfo, __rawEditor: editorRef.current });
+    }
+  }, [onRegisterApi, getSelectedLines, setCursorToLine, getViewportInfo]);
+
+  // After content updates, re-fire viewport callback (model changed, scroll pos may shift)
+  useEffect(() => {
+    if (!viewportCbRef.current) return;
+    const info = getViewportInfo();
+    if (info) {
+      viewportCbRef.current && viewportCbRef.current({ firstVisibleLine: info.firstVisibleLine, lastVisibleLine: info.lastVisibleLine, capacity: info.capacity, cause: 'content' });
+    }
+  }, [content, getViewportInfo]);
 
   // Log readiness once
   useEffect(() => {
@@ -213,7 +309,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
   // (Theme now passed directly to MonacoEditor prop to avoid resets from options changes)
 
   return (
-  <div className="editor-container" style={{ position: 'relative' }}>
+	<div className="editor-container" style={{ position: 'relative' }}>
       {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
   {/* Create Group button removed; now surfaced in HighlightSelector */}
       <MonacoEditor
@@ -229,6 +325,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
           fontSize: fontSize,
           wordWrap: 'on',
           scrollBeyondLastLine: false,
+          lineNumbers: (ln) => String(ln + lineNumberOffset),
         }}
         onMount={handleEditorDidMount}
       />
