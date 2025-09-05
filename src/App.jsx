@@ -4,7 +4,7 @@ import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
 import HighlightSelector from './components/HighlightSelector';
 import DocumentSelector from './components/DocumentSelector';
-import { GetServerDirectoryListing } from './api/library';
+import { GetServerDirectoryListing, getMetadata, fetchFileLines } from './api/library';
 
 const exampleDocuments = [
   {
@@ -45,6 +45,15 @@ function App() {
   const [serverEntries, setServerEntries] = useState([]); // array of {fileName,filePath,isDirectory}
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [userId] = useState(0); // TODO: replace with real user context
+  const [currentServerFile, setCurrentServerFile] = useState(null); // entry object
+  const [currentServerIndex, setCurrentServerIndex] = useState(-1);
+  const [fileMeta, setFileMeta] = useState(null); // { size, numberOfLines }
+  const [nextLineToLoad, setNextLineToLoad] = useState(0);
+  const [isLoadingLines, setIsLoadingLines] = useState(false);
+  const fileLoadIdRef = React.useRef(0);
+  const nextLineRef = React.useRef(0);
+  const isLoadingRef = React.useRef(false);
+  const LINES_PER_CHUNK = 800;
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -177,13 +186,74 @@ function App() {
   }, [userId]);
 
   const handleServerFileSelect = async (entry, idx) => {
-    // For now re-use example content placeholder until file fetching is implemented.
-    setSelectedDocIdx(idx);
-    setDocContent([`Selected file: ${entry.filePath}`, 'File loading not implemented yet.']);
+    setSelectedDocIdx(idx); // not used when server entries present but kept for state symmetry
+  setCurrentServerFile(entry);
+  setCurrentServerIndex(idx);
+    setDocContent([`Loading ${entry.fileName} ...`]);
     setDocHighlights([]);
     setHighlightTypes(baseHighlightTypes);
     setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
+    setFileMeta(null);
+  setNextLineToLoad(0);
+  nextLineRef.current = 0;
+  fileLoadIdRef.current += 1; // invalidate previous loads
+  const loadIdSnapshot = fileLoadIdRef.current;
+    // Fetch metadata then first chunk
+    try {
+      const meta = await getMetadata(entry.fileName, userId);
+      if (!meta) {
+        setDocContent([`Failed to load metadata for ${entry.fileName}`]);
+        return;
+      }
+  if (fileLoadIdRef.current !== loadIdSnapshot) return; // selection changed
+      setFileMeta(meta);
+  await loadMoreLines(entry.fileName, meta, loadIdSnapshot);
+    } catch (e) {
+      setDocContent([`Error loading file ${entry.fileName}`]);
+    }
   };
+
+  const loadMoreLines = useCallback(async (fileName, metaOverride = null, loadIdOverride = null) => {
+    if (isLoadingRef.current) return; // prevent overlap
+    const meta = metaOverride || fileMeta;
+    if (!meta) return;
+    const start = nextLineRef.current;
+    if (start >= meta.numberOfLines) return; // done
+    isLoadingRef.current = true;
+    setIsLoadingLines(true);
+    let scheduled = false;
+    try {
+      const remaining = meta.numberOfLines - start;
+      const toFetch = Math.min(LINES_PER_CHUNK, remaining);
+      const res = await fetchFileLines(fileName, userId, start, meta.numberOfLines, toFetch);
+      const text = res.text || '';
+      let newLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+      if (newLines.length && newLines[newLines.length - 1] === '') newLines.pop();
+      if (!newLines.length) {
+        nextLineRef.current = meta.numberOfLines;
+        setNextLineToLoad(meta.numberOfLines);
+        return;
+      }
+      setDocContent(prev => (start === 0 ? newLines : [...prev, ...newLines]));
+      const newStart = start + newLines.length;
+      nextLineRef.current = newStart;
+      setNextLineToLoad(newStart);
+      const activeLoadId = loadIdOverride ?? fileLoadIdRef.current;
+      if (newStart < meta.numberOfLines && activeLoadId === fileLoadIdRef.current) {
+        scheduled = true;
+        setTimeout(() => {
+          if (activeLoadId === fileLoadIdRef.current) {
+            loadMoreLines(fileName, meta);
+          }
+        }, 0);
+      }
+    } catch (e) {
+      console.error('Failed to load lines', e);
+    } finally {
+      isLoadingRef.current = false;
+      if (!scheduled) setIsLoadingLines(false); else setIsLoadingLines(false); // keep indicator simple
+    }
+  }, [fileMeta, userId]);
 
   return (
     <div className="app-container">
@@ -196,8 +266,15 @@ function App() {
               onSelect={handleDocumentSelect}
               serverEntries={serverEntries}
               onSelectServer={handleServerFileSelect}
+              currentServerIndex={currentServerIndex}
             />
             {loadingFiles && <span style={{ fontSize: '0.7rem', color: 'var(--text-soft)' }}>Loading…</span>}
+            {currentServerFile && fileMeta && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.7rem', color: 'var(--text-soft)' }}>
+                <span>{nextLineToLoad}/{fileMeta.numberOfLines} lines</span>
+                {isLoadingLines && <span>…</span>}
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <label style={{ fontSize: '0.85rem', color: 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 6 }}>

@@ -6,7 +6,7 @@ import React from 'react';
 // onSelect: handler for example doc selection
 // serverEntries: optional array [{fileName,filePath,isDirectory}]
 // onSelectServer: handler(entry, idxWithinServerEntries)
-function DocumentSelector({ documents, selectedIdx, onSelect, serverEntries = null, onSelectServer }) {
+function DocumentSelector({ documents, selectedIdx, onSelect, serverEntries = null, onSelectServer, currentServerIndex = -1 }) {
   const hasServer = Array.isArray(serverEntries) && serverEntries.length;
 
   const handleChange = (e) => {
@@ -20,19 +20,20 @@ function DocumentSelector({ documents, selectedIdx, onSelect, serverEntries = nu
     }
   };
 
+  const serverFileOptions = hasServer ? serverEntries.filter(e => !e.isDirectory) : [];
+  const selectValue = hasServer
+    ? (currentServerIndex >= 0 && currentServerIndex < serverFileOptions.length ? `srv:${serverEntries.indexOf(serverFileOptions[currentServerIndex])}` : '')
+    : selectedIdx;
+
   return (
     <div className="document-selector">
-      <select
-        value={hasServer ? '' : selectedIdx}
-        onChange={handleChange}
-        className="doc-select"
-      >
+      <select value={selectValue} onChange={handleChange} className="doc-select">
         {!hasServer && documents.map((doc, idx) => (
           <option key={doc.name} value={idx}>{doc.name}</option>
         ))}
-        {hasServer && <option value="" disabled>Select file…</option>}
-        {hasServer && serverEntries.filter(e => !e.isDirectory).map((entry, i) => (
-          <option key={entry.filePath} value={`srv:${i}`}>{entry.fileName}</option>
+        {hasServer && currentServerIndex === -1 && <option value="" disabled>Select file…</option>}
+        {hasServer && serverFileOptions.map((entry, i) => (
+          <option key={entry.filePath} value={`srv:${serverEntries.indexOf(entry)}`}>{entry.fileName}</option>
         ))}
       </select>
     </div>
