@@ -383,6 +383,12 @@ function App() {
                 const res = await fetchFileLines(currentServerFile.fileName, userId, start, fileMeta.numberOfLines, len);
                 const text = (res && res.text) ? res.text : '';
                 let lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+
+                if (lines.length !== len)
+                   console.error(`onRequestLines failed got ${lines.length} instead of ${len}`);
+                else
+                  console.log(`onRequestLines succeeded got ${lines.length}`);
+
                 if (lines.length && lines[lines.length - 1] === '') lines.pop();
                 return lines;
               } catch (e) {
@@ -390,8 +396,8 @@ function App() {
                 return [];
               }
             } : null}
-            virtualChunkSize={10000}
-            virtualPreload={5000}
+            virtualChunkSize={10000 / 10}
+            virtualPreload={5000 / 10}
             virtualPlaceholderLines={useVirtual && fileMeta ? fileMeta.numberOfLines : null}
           />
           <MiniMap

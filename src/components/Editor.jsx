@@ -34,7 +34,7 @@ function Editor({
   const pendingChunksRef = useRef(new Set());
   const lastViewportRef = useRef({ start: 0, end: 0 });
   const requestInflightRef = useRef(0);
-  // (no debounce timer in reverted version)
+  const requestVersionRef = useRef(0);
 
   // Helper: load a chunk (by chunk index) in virtualization mode
   const loadChunk = useCallback(async (chunkIdx) => {
@@ -46,21 +46,34 @@ function Editor({
     const end = Math.min(total, start + virtualChunkSize);
     pendingChunksRef.current.add(chunkIdx);
     requestInflightRef.current += 1;
+    const myVersion = ++requestVersionRef.current;
     try {
       const lines = await onRequestLines(start, end);
-      if (!Array.isArray(lines) || !editorRef.current || !monaco) return;
+      const expected = end - start;
+      if (!Array.isArray(lines) || lines.length !== expected) {
+        console.error('[virtual] chunk size mismatch – server bug', {
+          chunkIdx,
+          start,
+          end,
+          expected,
+          got: Array.isArray(lines) ? lines.length : 'non-array'
+        });
+        return; // do not apply partial data
+      }
+      if (!editorRef.current || !monaco) return;
+      // Abort if a newer request cycle has started (e.g., fast jump)
+      if (myVersion !== requestVersionRef.current) return;
       const model = editorRef.current.getModel();
       if (!model) return;
-      // Apply edits only if still not loaded
       if (!loadedChunksRef.current.has(chunkIdx)) {
         const text = lines.join('\n');
-        // Range inclusive: startLine -> endLine (end exclusive for our lines array)
+        // Replace full placeholder span: (start+1,1) -> (end+1,1)
         const startLineNumber = start + 1;
-        const endLineNumber = end; // because end is exclusive zero-based, it's already correct
+        const replaceEndLinePlusOne = end + 1;
         model.applyEdits([
           {
-            range: new monaco.Range(startLineNumber, 1, endLineNumber, 1),
-            text,
+            range: new monaco.Range(startLineNumber, 1, replaceEndLinePlusOne, 1),
+            text: text + (replaceEndLinePlusOne <= model.getLineCount() ? '\n' : ''),
             forceMoveMarkers: false,
           }
         ]);
@@ -143,15 +156,14 @@ function Editor({
     try {
       console.log('Editor Mounted:', editor);
       editorRef.current = editor;
-      // reset decoration ids on fresh mount to avoid stale references
-  decorationIdsRef.current = [];
+      decorationIdsRef.current = [];
       if (monaco) updateDecorations('mount');
-  if (isVirtual) {
-        // Attach scroll listener for virtualization
-        editor.onDidScrollChange(() => {
+      if (isVirtual) {
+        const scrollDisposable = editor.onDidScrollChange(() => {
           handleViewportChange();
         });
-        // Initial viewport load will happen after model prepared in effect below
+        // Clean up on unmount
+        editorRef.current.__virtualScrollDisposable = scrollDisposable;
       }
     } catch (e) {
       console.error('[handleEditorDidMount] error', e);
