@@ -392,6 +392,7 @@ function App() {
             } : null}
             virtualChunkSize={10000}
             virtualPreload={5000}
+            virtualPlaceholderLines={useVirtual && fileMeta ? fileMeta.numberOfLines : null}
           />
           <MiniMap
             content={docContent}

@@ -19,6 +19,7 @@ function Editor({
   virtualChunkSize = 10000,
   virtualPreload = 5000,
   virtualEvictDistanceChunks = 8,
+  virtualPlaceholderLines = null,
 }) {
   const isVirtual = !!virtualFileMeta && !!onRequestLines && Number.isInteger(virtualFileMeta.numberOfLines);
   const value = isVirtual ? undefined : content.join('\n');
@@ -33,6 +34,7 @@ function Editor({
   const pendingChunksRef = useRef(new Set());
   const lastViewportRef = useRef({ start: 0, end: 0 });
   const requestInflightRef = useRef(0);
+  // (no debounce timer in reverted version)
 
   // Helper: load a chunk (by chunk index) in virtualization mode
   const loadChunk = useCallback(async (chunkIdx) => {
@@ -86,7 +88,6 @@ function Editor({
     const editor = editorRef.current;
     const ranges = editor.getVisibleRanges();
     if (!ranges || !ranges.length) return;
-    // Merge ranges (usually one)
     let start = Infinity; let end = -1;
     for (const r of ranges) {
       if (r.startLineNumber - 1 < start) start = r.startLineNumber - 1;
@@ -94,15 +95,13 @@ function Editor({
     }
     if (start === Infinity || end === -1) return;
     const total = virtualFileMeta.numberOfLines;
-    // Add preload buffer
     const bufferedStart = Math.max(0, start - virtualPreload);
     const bufferedEnd = Math.min(total - 1, end + virtualPreload);
     const prev = lastViewportRef.current;
-    // Only act if significant change
     if (Math.abs(bufferedStart - prev.start) < 50 && Math.abs(bufferedEnd - prev.end) < 50) return;
     lastViewportRef.current = { start: bufferedStart, end: bufferedEnd };
     ensureRangeLoaded(bufferedStart, bufferedEnd);
-    // Evict far-away chunks to limit memory usage
+    // Immediate eviction of far-away chunks
     if (virtualEvictDistanceChunks >= 0) {
       const startChunkBuffered = Math.floor(bufferedStart / virtualChunkSize);
       const endChunkBuffered = Math.floor(bufferedEnd / virtualChunkSize);
@@ -111,7 +110,7 @@ function Editor({
       const retainMax = Math.min(lastChunk, endChunkBuffered + virtualEvictDistanceChunks);
       const toEvict = [];
       loadedChunksRef.current.forEach(c => { if (c < retainMin || c > retainMax) toEvict.push(c); });
-      if (toEvict.length && editorRef.current && monaco) {
+      if (toEvict.length && editorRef.current) {
         const model = editorRef.current.getModel();
         if (model) {
           const edits = [];
@@ -120,11 +119,12 @@ function Editor({
             if (startZero >= virtualFileMeta.numberOfLines) continue;
             const endZero = Math.min(virtualFileMeta.numberOfLines, startZero + virtualChunkSize);
             const startLineNumber = startZero + 1;
-            const endLineNumber = endZero; // inclusive
+            const endLineNumber = endZero;
             const lineCount = endZero - startZero;
             const placeholder = lineCount > 0 ? '\n'.repeat(Math.max(0, lineCount - 1)) : '';
+            const endCol = model.getLineMaxColumn(endLineNumber);
             edits.push({
-              range: new monaco.Range(startLineNumber, 1, endLineNumber, 1),
+              range: new monaco.Range(startLineNumber, 1, endLineNumber, endCol),
               text: placeholder,
               forceMoveMarkers: false,
             });
@@ -136,7 +136,7 @@ function Editor({
         }
       }
     }
-  }, [isVirtual, ensureRangeLoaded, virtualFileMeta, virtualPreload, virtualEvictDistanceChunks, virtualChunkSize, monaco]);
+  }, [isVirtual, ensureRangeLoaded, virtualFileMeta, virtualPreload, virtualEvictDistanceChunks, virtualChunkSize]);
 
   // Store editor instance on mount
   const handleEditorDidMount = (editor) => {
@@ -345,21 +345,14 @@ function Editor({
     }
   }, [fontSize]);
 
-  // Initialize virtual model once metadata ready
+  // Initialize viewport load (model already has placeholder via defaultValue)
   useEffect(() => {
-    if (!isVirtual || !monaco || !editorRef.current || virtualizedInitRef.current) return;
-    try {
-      const total = virtualFileMeta.numberOfLines;
-      const baseValue = total > 0 ? '\n'.repeat(Math.max(0, total - 1)) : '';
-      const model = monaco.editor.createModel(baseValue, 'plaintext');
-      editorRef.current.setModel(model);
-      virtualizedInitRef.current = true;
-      // Kick initial viewport load (delay to allow layout)
-      setTimeout(() => handleViewportChange(), 30);
-    } catch (e) {
-      console.warn('[virtual] init failed', e);
-    }
-  }, [isVirtual, monaco, virtualFileMeta, handleViewportChange]);
+    if (!isVirtual || !editorRef.current || virtualizedInitRef.current || !virtualFileMeta) return;
+    virtualizedInitRef.current = true;
+    setTimeout(() => handleViewportChange(), 30);
+  }, [isVirtual, handleViewportChange, virtualFileMeta]);
+
+  // (no timer cleanup required after revert)
 
   // (Theme now passed directly to MonacoEditor prop to avoid resets from options changes)
 
@@ -367,12 +360,12 @@ function Editor({
   <div className="editor-container" style={{ position: 'relative' }}>
       {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
   {/* Create Group button removed; now surfaced in HighlightSelector */}
-      <MonacoEditor
-        key={theme + (isVirtual ? '-virtual' : '-std')}
+    <MonacoEditor
+      key={theme + (isVirtual ? '-virtual-' + (virtualFileMeta ? virtualFileMeta.numberOfLines : '0') : '-std')}
         height="100%"
         width="100%"
         language="plaintext"
-        {...(isVirtual ? { defaultValue: '' } : { value })}
+      {...(isVirtual ? { defaultValue: (virtualPlaceholderLines ? '\n'.repeat(Math.max(0, virtualPlaceholderLines - 1)) : (virtualFileMeta ? '\n'.repeat(Math.max(0, virtualFileMeta.numberOfLines - 1)) : '')) } : { value })}
         theme={theme === 'dark' ? 'vc-dark' : 'vc-light'}
         onChange={handleChange}
         options={{
