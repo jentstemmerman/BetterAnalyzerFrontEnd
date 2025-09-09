@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import MonacoEditor, { useMonaco } from '@monaco-editor/react';
 
-function Editor({ content, setContent, highlights, highlightTypes, theme, fontSize = 16, onRegisterApi, lineNumberOffset = 0, onViewportChange }) {
+function Editor({ content, setContent, highlights, highlightTypes, theme, fontSize = 16, onRegisterApi, lineNumberOffset = 0, onViewportChange, totalLines = null, loadedEndGlobal = null }) {
   const value = content.join('\n');
 
   const editorRef = useRef(null);
@@ -12,6 +12,8 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
   // Always use latest onViewportChange without needing to rebind Monaco listeners
   const viewportCbRef = useRef(onViewportChange);
   useEffect(() => { viewportCbRef.current = onViewportChange; }, [onViewportChange]);
+  const viewZoneIdsRef = useRef({ top: null, bottom: null });
+  const lastVirtualMetricsRef = useRef({ top: 0, bottom: 0 });
 
   // Safely determine line height with multiple fallbacks (monaco option -> fontInfo -> DOM probe -> default)
   const resolveLineHeight = useCallback(() => {
@@ -83,6 +85,8 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
           } catch {}
         });
       }
+  // Initial virtual zones injection if needed
+  applyVirtualPadding();
     } catch (e) {
       console.error('[handleEditorDidMount] error', e);
     }
@@ -265,6 +269,76 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
       viewportCbRef.current && viewportCbRef.current({ firstVisibleLine: info.firstVisibleLine, lastVisibleLine: info.lastVisibleLine, capacity: info.capacity, cause: 'content' });
     }
   }, [content, getViewportInfo]);
+
+  // Compute & apply virtual padding (top/bottom view zones) so scrollbar reflects total file length
+  const applyVirtualPadding = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor || !monaco) return;
+    if (!totalLines || !Number.isFinite(totalLines) || totalLines <= 0) {
+      // remove any existing zones
+      editor.changeViewZones(accessor => {
+        const { top, bottom } = viewZoneIdsRef.current;
+        if (top) accessor.removeZone(top);
+        if (bottom) accessor.removeZone(bottom);
+        viewZoneIdsRef.current = { top: null, bottom: null };
+      });
+      lastVirtualMetricsRef.current = { top: 0, bottom: 0 };
+      return;
+    }
+    const model = editor.getModel?.();
+    if (!model) return;
+    const visibleLines = model.getLineCount();
+    const globalStart = lineNumberOffset; // first global line represented by model line 1
+    const globalEndExclusive = loadedEndGlobal != null ? loadedEndGlobal : (lineNumberOffset + visibleLines); // exclusive
+    // Lines before window
+    const before = Math.max(0, globalStart);
+    const after = Math.max(0, totalLines - globalEndExclusive);
+    const lineHeight = resolveLineHeight();
+    const topPx = before * lineHeight;
+    const bottomPx = after * lineHeight;
+    const prev = lastVirtualMetricsRef.current;
+    if (prev.top === topPx && prev.bottom === bottomPx) return; // no change
+    lastVirtualMetricsRef.current = { top: topPx, bottom: bottomPx };
+    editor.changeViewZones(accessor => {
+      // Update or create top zone
+      if (viewZoneIdsRef.current.top) accessor.removeZone(viewZoneIdsRef.current.top);
+      if (topPx > 0) {
+        const id = accessor.addZone({
+          afterLineNumber: 0,
+          heightInPx: topPx,
+          domNode: (() => {
+            const d = document.createElement('div');
+            d.style.height = topPx + 'px';
+            return d;
+          })(),
+        });
+        viewZoneIdsRef.current.top = id;
+      } else {
+        viewZoneIdsRef.current.top = null;
+      }
+      // Update or create bottom zone
+      if (viewZoneIdsRef.current.bottom) accessor.removeZone(viewZoneIdsRef.current.bottom);
+      if (bottomPx > 0) {
+        const id = accessor.addZone({
+          afterLineNumber: model.getLineCount(),
+          heightInPx: bottomPx,
+          domNode: (() => {
+            const d = document.createElement('div');
+            d.style.height = bottomPx + 'px';
+            return d;
+          })(),
+        });
+        viewZoneIdsRef.current.bottom = id;
+      } else {
+        viewZoneIdsRef.current.bottom = null;
+      }
+    });
+  }, [totalLines, loadedEndGlobal, lineNumberOffset, resolveLineHeight, monaco]);
+
+  // Re-apply virtual padding whenever window metrics change
+  useEffect(() => {
+    applyVirtualPadding();
+  }, [applyVirtualPadding, content, fontSize]);
 
   // Log readiness once
   useEffect(() => {

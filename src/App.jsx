@@ -58,10 +58,13 @@ function App() {
   const [windowStart, setWindowStart] = useState(0); // mirrored state for render (lineNumberOffset)
   const lastViewportRef = React.useRef({ first: -1, last: -1 });
   const lastGlobalLastRef = React.useRef(-1); // track previous globalLast to detect real user scroll
+  const lastPrefetchTsRef = React.useRef(0); // throttle generic distance-based prefetch
+  const lastAdvanceTsRef = React.useRef(Date.now()); // when nextLineRef last advanced
   const retryMapRef = React.useRef({}); // { startLine: { attempts, nextDelayMs } }
   const [fetchError, setFetchError] = useState(null); // { message, atLine }
   const LINES_PER_CHUNK = 800; // fetch size from server
   const MAX_BUFFER_LINES = 20000; // keep at most this many lines resident to avoid OOM
+  const TARGET_BACK_BUFFER = 2000; // preferred number of previously viewed lines to retain behind viewport
   const BOTTOM_PREFETCH_MARGIN = 600; // when viewport close to bottom loaded region, fetch more
   const TOP_PREFETCH_MARGIN = 600; // (future) allow backward paging when scrolled near top & trimmed
   const ENABLE_BACKWARD_FETCH = false; // set true if we implement reverse fetch later
@@ -230,6 +233,7 @@ function App() {
   };
 
   const loadMoreLines = useCallback(async (fileName, metaOverride = null, loadIdOverride = null) => {
+    console.log('Loading more lines for', fileName);
     if (isLoadingRef.current) return; // prevent overlap
     const meta = metaOverride || fileMeta;
     if (!meta) return;
@@ -277,6 +281,7 @@ function App() {
       const newGlobalNext = start + newLines.length;
       nextLineRef.current = newGlobalNext;
       setNextLineToLoad(newGlobalNext);
+  lastAdvanceTsRef.current = Date.now();
       if (process.env.NODE_ENV === 'development') {
         console.log('[stream] fetched lines', start, '->', newGlobalNext, 'of', meta.numberOfLines);
       }
@@ -349,9 +354,36 @@ function App() {
     if (process.env.NODE_ENV === 'development' && cause === 'scroll') {
       console.log('[scroll-eval]', { globalLast, loadedEnd, distanceAhead, cap, threshold: PREFETCH_AHEAD });
     }
+    // Primary prefetch: user scroll forward & near end of loaded buffer
     if (loadedEnd < fileMeta.numberOfLines && userScrolled && distanceAhead < PREFETCH_AHEAD) {
-      if (process.env.NODE_ENV === 'development') console.log('[prefetch-trigger] threshold');
+      if (process.env.NODE_ENV === 'development') console.log('[prefetch-trigger] scroll-threshold');
       loadMoreLines(currentServerFile.fileName, fileMeta);
+    }
+    // Secondary prefetch: irrespective of monotonic increase (handles virtual window resets) throttled by time
+    else if (loadedEnd < fileMeta.numberOfLines && distanceAhead < PREFETCH_AHEAD / 2) {
+      const now = Date.now();
+      if (now - lastPrefetchTsRef.current > 500 && !isLoadingRef.current) {
+        lastPrefetchTsRef.current = now;
+        if (process.env.NODE_ENV === 'development') console.log('[prefetch-trigger] distance-only');
+        loadMoreLines(currentServerFile.fileName, fileMeta);
+      }
+    }
+
+    // Dynamic trimming of lines before viewport to keep memory bounded earlier than hard MAX_BUFFER_LINES
+    // Keep only TARGET_BACK_BUFFER lines behind first visible line when possible
+    const backDistance = globalFirst - windowStartRef.current; // how many lines we already have behind
+    if (backDistance > TARGET_BACK_BUFFER) {
+      const trimCount = backDistance - TARGET_BACK_BUFFER; // lines to drop from head
+      setDocContent(prev => {
+        if (trimCount <= 0 || trimCount >= prev.length) return prev;
+        const sliced = prev.slice(trimCount);
+        windowStartRef.current += trimCount;
+        setWindowStart(windowStartRef.current);
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[dynamic-trim]', { trimCount, newWindowStart: windowStartRef.current, newLen: sliced.length });
+        }
+        return sliced;
+      });
     }
     // (Future) Top prefetch for backward scrolling if we trimmed
     if (ENABLE_BACKWARD_FETCH && windowStartRef.current > 0 && (globalFirst - TOP_PREFETCH_MARGIN) <= windowStartRef.current) {
@@ -378,6 +410,26 @@ function App() {
         loadMoreLines(currentServerFile.fileName, fileMeta);
       }
     }, 1200);
+    return () => clearInterval(id);
+  }, [currentServerFile, fileMeta, loadMoreLines]);
+
+  // Anti-stall watchdog: if no advancement for a while and we're near end, force a fetch
+  useEffect(() => {
+    if (!currentServerFile || !fileMeta) return;
+    const id = setInterval(() => {
+      const loadedEnd = nextLineRef.current;
+      if (loadedEnd >= fileMeta.numberOfLines) return;
+      const now = Date.now();
+      // 4s without progress while viewport close to tail
+      const { last } = lastViewportRef.current;
+      if (last !== -1) {
+        const distanceAhead = (loadedEnd - 1) - last;
+        if (distanceAhead < PREFETCH_AHEAD && (now - lastAdvanceTsRef.current) > 4000 && !isLoadingRef.current) {
+          if (process.env.NODE_ENV === 'development') console.log('[watchdog] forcing prefetch');
+          loadMoreLines(currentServerFile.fileName, fileMeta);
+        }
+      }
+    }, 2500);
     return () => clearInterval(id);
   }, [currentServerFile, fileMeta, loadMoreLines]);
   // (Removed aggressive fallback interval that caused whole-file loading). If needed later, reintroduce with a guard.
@@ -506,6 +558,8 @@ function App() {
             theme={theme}
             fontSize={fontSize}
             lineNumberOffset={windowStart}
+            totalLines={fileMeta?.numberOfLines || null}
+            loadedEndGlobal={windowStart + docContent.length}
             onViewportChange={handleViewportChange}
             onRegisterApi={(api) => { editorApiRef.current = api; }}
           />
