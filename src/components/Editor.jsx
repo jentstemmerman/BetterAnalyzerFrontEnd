@@ -1,14 +1,142 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import MonacoEditor, { useMonaco } from '@monaco-editor/react';
 
-function Editor({ content, setContent, highlights, highlightTypes, theme, fontSize = 12, onRegisterApi }) {
-  const value = content.join('\n');
+// Virtualized editor props (optional):
+// virtualFileMeta: { numberOfLines }
+// onRequestLines: async (startInclusive, endExclusive) => Promise<string[]>
+// virtualChunkSize: number (lines per fetch chunk)
+// virtualPreload: number (lines of buffer before & after viewport)
+function Editor({
+  content,
+  setContent,
+  highlights,
+  highlightTypes,
+  theme,
+  fontSize = 12,
+  onRegisterApi,
+  virtualFileMeta = null,
+  onRequestLines = null,
+  virtualChunkSize = 10000,
+  virtualPreload = 5000,
+  virtualEvictDistanceChunks = 8,
+}) {
+  const isVirtual = !!virtualFileMeta && !!onRequestLines && Number.isInteger(virtualFileMeta.numberOfLines);
+  const value = isVirtual ? undefined : content.join('\n');
 
   const editorRef = useRef(null);
   const monaco = useMonaco();
   // Track current Monaco decoration IDs in a ref to avoid race conditions
   const decorationIdsRef = useRef([]);
   const scheduleRef = useRef(null);
+  const virtualizedInitRef = useRef(false);
+  const loadedChunksRef = useRef(new Set()); // chunk indices loaded
+  const pendingChunksRef = useRef(new Set());
+  const lastViewportRef = useRef({ start: 0, end: 0 });
+  const requestInflightRef = useRef(0);
+
+  // Helper: load a chunk (by chunk index) in virtualization mode
+  const loadChunk = useCallback(async (chunkIdx) => {
+    if (!isVirtual) return;
+    if (loadedChunksRef.current.has(chunkIdx) || pendingChunksRef.current.has(chunkIdx)) return;
+    const total = virtualFileMeta.numberOfLines;
+    const start = chunkIdx * virtualChunkSize;
+    if (start >= total) return;
+    const end = Math.min(total, start + virtualChunkSize);
+    pendingChunksRef.current.add(chunkIdx);
+    requestInflightRef.current += 1;
+    try {
+      const lines = await onRequestLines(start, end);
+      if (!Array.isArray(lines) || !editorRef.current || !monaco) return;
+      const model = editorRef.current.getModel();
+      if (!model) return;
+      // Apply edits only if still not loaded
+      if (!loadedChunksRef.current.has(chunkIdx)) {
+        const text = lines.join('\n');
+        // Range inclusive: startLine -> endLine (end exclusive for our lines array)
+        const startLineNumber = start + 1;
+        const endLineNumber = end; // because end is exclusive zero-based, it's already correct
+        model.applyEdits([
+          {
+            range: new monaco.Range(startLineNumber, 1, endLineNumber, 1),
+            text,
+            forceMoveMarkers: false,
+          }
+        ]);
+        loadedChunksRef.current.add(chunkIdx);
+      }
+    } catch (e) {
+      console.warn('[virtual] failed loading chunk', chunkIdx, e);
+    } finally {
+      pendingChunksRef.current.delete(chunkIdx);
+      requestInflightRef.current -= 1;
+    }
+  }, [isVirtual, virtualChunkSize, onRequestLines, virtualFileMeta, monaco]);
+
+  // Load all chunks covering a range
+  const ensureRangeLoaded = useCallback((startLineZero, endLineZero) => {
+    if (!isVirtual) return;
+    const startChunk = Math.floor(startLineZero / virtualChunkSize);
+    const endChunk = Math.floor((endLineZero) / virtualChunkSize);
+    for (let c = startChunk; c <= endChunk; c++) loadChunk(c);
+  }, [isVirtual, virtualChunkSize, loadChunk]);
+
+  // Virtualization viewport handler
+  const handleViewportChange = useCallback(() => {
+    if (!isVirtual || !editorRef.current) return;
+    const editor = editorRef.current;
+    const ranges = editor.getVisibleRanges();
+    if (!ranges || !ranges.length) return;
+    // Merge ranges (usually one)
+    let start = Infinity; let end = -1;
+    for (const r of ranges) {
+      if (r.startLineNumber - 1 < start) start = r.startLineNumber - 1;
+      if (r.endLineNumber - 1 > end) end = r.endLineNumber - 1;
+    }
+    if (start === Infinity || end === -1) return;
+    const total = virtualFileMeta.numberOfLines;
+    // Add preload buffer
+    const bufferedStart = Math.max(0, start - virtualPreload);
+    const bufferedEnd = Math.min(total - 1, end + virtualPreload);
+    const prev = lastViewportRef.current;
+    // Only act if significant change
+    if (Math.abs(bufferedStart - prev.start) < 50 && Math.abs(bufferedEnd - prev.end) < 50) return;
+    lastViewportRef.current = { start: bufferedStart, end: bufferedEnd };
+    ensureRangeLoaded(bufferedStart, bufferedEnd);
+    // Evict far-away chunks to limit memory usage
+    if (virtualEvictDistanceChunks >= 0) {
+      const startChunkBuffered = Math.floor(bufferedStart / virtualChunkSize);
+      const endChunkBuffered = Math.floor(bufferedEnd / virtualChunkSize);
+      const lastChunk = Math.floor((virtualFileMeta.numberOfLines - 1) / virtualChunkSize);
+      const retainMin = Math.max(0, startChunkBuffered - virtualEvictDistanceChunks);
+      const retainMax = Math.min(lastChunk, endChunkBuffered + virtualEvictDistanceChunks);
+      const toEvict = [];
+      loadedChunksRef.current.forEach(c => { if (c < retainMin || c > retainMax) toEvict.push(c); });
+      if (toEvict.length && editorRef.current && monaco) {
+        const model = editorRef.current.getModel();
+        if (model) {
+          const edits = [];
+          for (const c of toEvict) {
+            const startZero = c * virtualChunkSize;
+            if (startZero >= virtualFileMeta.numberOfLines) continue;
+            const endZero = Math.min(virtualFileMeta.numberOfLines, startZero + virtualChunkSize);
+            const startLineNumber = startZero + 1;
+            const endLineNumber = endZero; // inclusive
+            const lineCount = endZero - startZero;
+            const placeholder = lineCount > 0 ? '\n'.repeat(Math.max(0, lineCount - 1)) : '';
+            edits.push({
+              range: new monaco.Range(startLineNumber, 1, endLineNumber, 1),
+              text: placeholder,
+              forceMoveMarkers: false,
+            });
+            loadedChunksRef.current.delete(c);
+          }
+          if (edits.length) {
+            try { model.applyEdits(edits); } catch (e) { console.warn('[virtual] eviction apply failed', e); }
+          }
+        }
+      }
+    }
+  }, [isVirtual, ensureRangeLoaded, virtualFileMeta, virtualPreload, virtualEvictDistanceChunks, virtualChunkSize, monaco]);
 
   // Store editor instance on mount
   const handleEditorDidMount = (editor) => {
@@ -18,6 +146,13 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
       // reset decoration ids on fresh mount to avoid stale references
   decorationIdsRef.current = [];
       if (monaco) updateDecorations('mount');
+  if (isVirtual) {
+        // Attach scroll listener for virtualization
+        editor.onDidScrollChange(() => {
+          handleViewportChange();
+        });
+        // Initial viewport load will happen after model prepared in effect below
+      }
     } catch (e) {
       console.error('[handleEditorDidMount] error', e);
     }
@@ -72,15 +207,15 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
     }
   }, [monaco, highlights, highlightTypes]);
 
-  // Unified decorations scheduler effect
+  // Unified decorations scheduler effect (skip content dependency in virtual mode to avoid massive re-renders)
   useEffect(() => {
     if (!monaco || !editorRef.current) return;
-    // debounce via animation frame & timeout for stability
     if (scheduleRef.current) {
       cancelAnimationFrame(scheduleRef.current.af);
       clearTimeout(scheduleRef.current.to);
     }
-    const af = requestAnimationFrame(() => updateDecorations('raf'));
+    const depsKey = JSON.stringify(highlights.map(h => h.line + ':' + h.type)) + '|' + highlightTypes.length + '|' + (isVirtual ? 'v' : content.length);
+    const af = requestAnimationFrame(() => updateDecorations('raf:' + depsKey));
     const to = setTimeout(() => updateDecorations('timeout-fallback'), 120);
     scheduleRef.current = { af, to };
     return () => {
@@ -89,7 +224,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
         clearTimeout(scheduleRef.current.to);
       }
     };
-  }, [monaco, highlights, content, highlightTypes, updateDecorations]);
+  }, [monaco, highlights, highlightTypes, updateDecorations, content.length, isVirtual]);
 
   // Inject highlight styles for each highlight type (once per mount / types change)
   useEffect(() => {
@@ -210,6 +345,22 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
     }
   }, [fontSize]);
 
+  // Initialize virtual model once metadata ready
+  useEffect(() => {
+    if (!isVirtual || !monaco || !editorRef.current || virtualizedInitRef.current) return;
+    try {
+      const total = virtualFileMeta.numberOfLines;
+      const baseValue = total > 0 ? '\n'.repeat(Math.max(0, total - 1)) : '';
+      const model = monaco.editor.createModel(baseValue, 'plaintext');
+      editorRef.current.setModel(model);
+      virtualizedInitRef.current = true;
+      // Kick initial viewport load (delay to allow layout)
+      setTimeout(() => handleViewportChange(), 30);
+    } catch (e) {
+      console.warn('[virtual] init failed', e);
+    }
+  }, [isVirtual, monaco, virtualFileMeta, handleViewportChange]);
+
   // (Theme now passed directly to MonacoEditor prop to avoid resets from options changes)
 
   return (
@@ -217,11 +368,11 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
       {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
   {/* Create Group button removed; now surfaced in HighlightSelector */}
       <MonacoEditor
-        key={theme}
+        key={theme + (isVirtual ? '-virtual' : '-std')}
         height="100%"
         width="100%"
         language="plaintext"
-        value={value}
+        {...(isVirtual ? { defaultValue: '' } : { value })}
         theme={theme === 'dark' ? 'vc-dark' : 'vc-light'}
         onChange={handleChange}
         options={{
@@ -229,6 +380,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
           fontSize: fontSize,
           wordWrap: 'on',
           scrollBeyondLastLine: false,
+          readOnly: false,
         }}
         onMount={handleEditorDidMount}
       />

@@ -50,6 +50,7 @@ function App() {
   const [fileMeta, setFileMeta] = useState(null); // { size, numberOfLines }
   const [nextLineToLoad, setNextLineToLoad] = useState(0);
   const [isLoadingLines, setIsLoadingLines] = useState(false);
+  const [useVirtual, setUseVirtual] = useState(false); // enable monaco viewport-driven loading
   const fileLoadIdRef = React.useRef(0);
   const nextLineRef = React.useRef(0);
   const isLoadingRef = React.useRef(false);
@@ -195,6 +196,7 @@ function App() {
     setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
     setFileMeta(null);
   setNextLineToLoad(0);
+  setUseVirtual(false);
   nextLineRef.current = 0;
   fileLoadIdRef.current += 1; // invalidate previous loads
   const loadIdSnapshot = fileLoadIdRef.current;
@@ -207,7 +209,15 @@ function App() {
       }
   if (fileLoadIdRef.current !== loadIdSnapshot) return; // selection changed
       setFileMeta(meta);
-  await loadMoreLines(entry.fileName, meta, loadIdSnapshot);
+      // Decide virtualization: enable if file larger than one chunk (or always true if desired)
+      const shouldVirtualize = meta.numberOfLines > LINES_PER_CHUNK; // heuristic
+      setUseVirtual(shouldVirtualize);
+      if (shouldVirtualize) {
+        // In virtual mode don't eagerly load lines; editor will fetch on demand
+        setDocContent([]); // keep empty; virtual model supplies blank lines
+      } else {
+        await loadMoreLines(entry.fileName, meta, loadIdSnapshot);
+      }
     } catch (e) {
       setDocContent([`Error loading file ${entry.fileName}`]);
     }
@@ -252,7 +262,7 @@ function App() {
       nextLineRef.current = newStart;
       setNextLineToLoad(newStart);
       const activeLoadId = loadIdOverride ?? fileLoadIdRef.current;
-      if (newStart < meta.numberOfLines && activeLoadId === fileLoadIdRef.current) {
+    if (!useVirtual && newStart < meta.numberOfLines && activeLoadId === fileLoadIdRef.current) {
         scheduled = true;
         console.log('loadMoreLines setTimeout');
         setTimeout(() => {
@@ -268,7 +278,7 @@ function App() {
       if (!scheduled) setIsLoadingLines(false); else setIsLoadingLines(false); // keep indicator simple
     }
      console.log('loadMoreLines end');
-  }, [fileMeta, userId]);
+  }, [fileMeta, userId, useVirtual]);
 
   return (
     <div className="app-container">
@@ -360,12 +370,28 @@ function App() {
   <div className="layout-row" style={{ alignItems: 'stretch', gap: '3px' }}>
           <Editor
             content={docContent}
-              setContent={setDocContent}
-              highlights={highlights}
-              highlightTypes={highlightTypes}
-              theme={theme}
-              fontSize={fontSize}
-              onRegisterApi={(api) => { editorApiRef.current = api; }}
+            setContent={setDocContent}
+            highlights={highlights}
+            highlightTypes={highlightTypes}
+            theme={theme}
+            fontSize={fontSize}
+            onRegisterApi={(api) => { editorApiRef.current = api; }}
+            virtualFileMeta={useVirtual && currentServerFile && fileMeta ? fileMeta : null}
+            onRequestLines={useVirtual && currentServerFile && fileMeta ? async (start, end) => {
+              try {
+                const len = end - start;
+                const res = await fetchFileLines(currentServerFile.fileName, userId, start, fileMeta.numberOfLines, len);
+                const text = (res && res.text) ? res.text : '';
+                let lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+                if (lines.length && lines[lines.length - 1] === '') lines.pop();
+                return lines;
+              } catch (e) {
+                console.warn('onRequestLines failed', e);
+                return [];
+              }
+            } : null}
+            virtualChunkSize={10000}
+            virtualPreload={5000}
           />
           <MiniMap
             content={docContent}
