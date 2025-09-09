@@ -35,13 +35,18 @@ export const fetchFileLines = async (fileName, userId, startLine, fileSize, numb
     console.error('position >= fileSize', startLine, fileSize);
     return { text: '', start: startLine, size: 0 };
   } else {
+    const startTime = Date.now();
     try {
       const response = await axios.get(`${backendUrl}/api/file/getlines/${fileName}`, {
         params: { start: startLine, size: numberOfLines, userId: userId },
       });
+      const endTime = Date.now();
+      console.log(`fetchFileLines: getlines call took ${endTime - startTime} ms`);
       const { text, start, size } = response.data;
       return { text: text, start: start, size: size };
     } catch (error) {
+      const endTime = Date.now();
+      console.log(`fetchFileLines: getlines call failed after ${endTime - startTime} ms`);
       console.error('Error fetching file lines:', error);
       throw error;
     }

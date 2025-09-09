@@ -39,7 +39,7 @@ function App() {
   const [docHighlights, setDocHighlights] = useState(exampleDocuments[0].highlights);
   const [groupCounter, setGroupCounter] = useState(1);
   const [theme, setTheme] = useState(() => (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-  const [fontSize, setFontSize] = useState(16);
+  const [fontSize, setFontSize] = useState(14);
   const [showColorManager, setShowColorManager] = useState(false);
   const [minimapWidth, setMinimapWidth] = useState(15);
   const [serverEntries, setServerEntries] = useState([]); // array of {fileName,filePath,isDirectory}
@@ -53,7 +53,7 @@ function App() {
   const fileLoadIdRef = React.useRef(0);
   const nextLineRef = React.useRef(0);
   const isLoadingRef = React.useRef(false);
-  const LINES_PER_CHUNK = 800;
+  const LINES_PER_CHUNK = 10000;
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -214,21 +214,34 @@ function App() {
   };
 
   const loadMoreLines = useCallback(async (fileName, metaOverride = null, loadIdOverride = null) => {
+    console.log('loadMoreLines called');
+    
     if (isLoadingRef.current) return; // prevent overlap
     const meta = metaOverride || fileMeta;
     if (!meta) return;
     const start = nextLineRef.current;
     if (start >= meta.numberOfLines) return; // done
+    
+    console.log('loadMoreLines start');
     isLoadingRef.current = true;
     setIsLoadingLines(true);
     let scheduled = false;
+    
     try {
       const remaining = meta.numberOfLines - start;
       const toFetch = Math.min(LINES_PER_CHUNK, remaining);
+
+      if (toFetch < LINES_PER_CHUNK) {
+        console.log('Final chunk, fetching remaining', remaining);
+      }
+
       const res = await fetchFileLines(fileName, userId, start, meta.numberOfLines, toFetch);
       const text = res.text || '';
       let newLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-      if (newLines.length && newLines[newLines.length - 1] === '') newLines.pop();
+      if (newLines.length && newLines[newLines.length - 1] === '') 
+      {
+          newLines.pop();
+      }
       if (!newLines.length) {
         nextLineRef.current = meta.numberOfLines;
         setNextLineToLoad(meta.numberOfLines);
@@ -241,6 +254,7 @@ function App() {
       const activeLoadId = loadIdOverride ?? fileLoadIdRef.current;
       if (newStart < meta.numberOfLines && activeLoadId === fileLoadIdRef.current) {
         scheduled = true;
+        console.log('loadMoreLines setTimeout');
         setTimeout(() => {
           if (activeLoadId === fileLoadIdRef.current) {
             loadMoreLines(fileName, meta);
@@ -253,6 +267,7 @@ function App() {
       isLoadingRef.current = false;
       if (!scheduled) setIsLoadingLines(false); else setIsLoadingLines(false); // keep indicator simple
     }
+     console.log('loadMoreLines end');
   }, [fileMeta, userId]);
 
   return (

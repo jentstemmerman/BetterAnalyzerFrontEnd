@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import MonacoEditor, { useMonaco } from '@monaco-editor/react';
 
-function Editor({ content, setContent, highlights, highlightTypes, theme, fontSize = 16, onRegisterApi }) {
+function Editor({ content, setContent, highlights, highlightTypes, theme, fontSize = 12, onRegisterApi }) {
   const value = content.join('\n');
 
   const editorRef = useRef(null);
@@ -132,7 +132,7 @@ function Editor({ content, setContent, highlights, highlightTypes, theme, fontSi
   }, [highlightTypes]);
 
   const handleChange = (newValue) => {
-    setContent(newValue.split('\n'));
+    //setContent(newValue.split('\n'));
   };
 
   const getSelectedLines = useCallback(() => {
