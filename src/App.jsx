@@ -188,18 +188,18 @@ function App() {
 
   const handleServerFileSelect = async (entry, idx) => {
     setSelectedDocIdx(idx); // not used when server entries present but kept for state symmetry
-  setCurrentServerFile(entry);
-  setCurrentServerIndex(idx);
+    setCurrentServerFile(entry);
+    setCurrentServerIndex(idx);
     setDocContent([`Loading ${entry.fileName} ...`]);
     setDocHighlights([]);
     setHighlightTypes(baseHighlightTypes);
     setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
     setFileMeta(null);
-  setNextLineToLoad(0);
-  setUseVirtual(false);
-  nextLineRef.current = 0;
-  fileLoadIdRef.current += 1; // invalidate previous loads
-  const loadIdSnapshot = fileLoadIdRef.current;
+    setNextLineToLoad(0);
+    setUseVirtual(false);
+    nextLineRef.current = 0;
+    fileLoadIdRef.current += 1; // invalidate previous loads
+    const loadIdSnapshot = fileLoadIdRef.current;
     // Fetch metadata then first chunk
     try {
       const meta = await getMetadata(entry.fileName, userId);
