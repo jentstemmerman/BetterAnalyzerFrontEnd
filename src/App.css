@@ -19,12 +19,18 @@
 /* Shared horizontal alignment container */
 .layout-row {
   width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
+  /* Removed max-width so rows can expand with viewport */
   display: flex;
   align-items: center;
   gap: 16px;
   box-sizing: border-box;
+  margin: 0; /* flush; parent padding controls breathing room */
+}
+
+/* Optional constrained variant if needed elsewhere */
+.layout-row--centered {
+  max-width: 1400px;
+  margin: 0 auto;
 }
 
 .highlight-selector-wrapper {
@@ -393,3 +399,14 @@
   background: var(--accent-hover);
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--bg-alt) 55%, transparent);
 }
+
+/* Allow the main editor region to grow full width beyond the generic 1400px cap */
+.editor-main > .layout-row {
+  max-width: none;
+}
+
+/* Header and highlight bar should also span full width */
+/* overrides no longer necessary after global removal; kept if legacy HTML adds nested rows */
+.app-header > .layout-row,
+.highlight-selector-wrapper > .layout-row { max-width: 100%; }
+
