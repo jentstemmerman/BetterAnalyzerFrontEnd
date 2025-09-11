@@ -34,10 +34,11 @@ function Editor({
   const pendingChunksRef = useRef(new Set());
   const lastViewportRef = useRef({ start: 0, end: 0 });
   const requestInflightRef = useRef(0);
-  const requestVersionRef = useRef(0);
+  // Replaces requestVersionRef: now a "viewport generation" incremented once per viewport change
+  const generationRef = useRef(0);
 
   // Helper: load a chunk (by chunk index) in virtualization mode
-  const loadChunk = useCallback(async (chunkIdx) => {
+  const loadChunk = useCallback(async (chunkIdx, generation) => {
     if (!isVirtual) return;
     if (loadedChunksRef.current.has(chunkIdx) || pendingChunksRef.current.has(chunkIdx)) return;
     const total = virtualFileMeta.numberOfLines;
@@ -46,37 +47,40 @@ function Editor({
     const end = Math.min(total, start + virtualChunkSize);
     pendingChunksRef.current.add(chunkIdx);
     requestInflightRef.current += 1;
-    const myVersion = ++requestVersionRef.current;
+    const myGeneration = generation;
+
+    console.log('[virtual] loading chunk', { chunkIdx, start, end, generation: myGeneration, inflight: requestInflightRef.current });
+
     try {
       const lines = await onRequestLines(start, end);
+      if (myGeneration !== generationRef.current) {
+        console.warn('[virtual] stale chunk (new viewport)', { chunkIdx, myGeneration, currentGeneration: generationRef.current });
+        return;
+      }
       const expected = end - start;
       if (!Array.isArray(lines) || lines.length !== expected) {
-        console.error('[virtual] chunk size mismatch – server bug', {
-          chunkIdx,
-          start,
-          end,
-          expected,
-          got: Array.isArray(lines) ? lines.length : 'non-array'
-        });
-        return; // do not apply partial data
+        console.error('[virtual] chunk size mismatch – server bug', { chunkIdx, start, end, expected, got: Array.isArray(lines) ? lines.length : 'non-array' });
+        return;
       }
-      if (!editorRef.current || !monaco) return;
-      // Abort if a newer request cycle has started (e.g., fast jump)
-      if (myVersion !== requestVersionRef.current) return;
+      if (!editorRef.current || !monaco) {
+        console.warn('[virtual] editor gone before chunk loaded', { chunkIdx });
+        return;
+      }
       const model = editorRef.current.getModel();
-      if (!model) return;
+      if (!model) {
+        console.warn('[virtual] editor model gone before chunk loaded', { chunkIdx });
+        return;
+      }
       if (!loadedChunksRef.current.has(chunkIdx)) {
+        console.log('[virtual] applying loaded chunk', { chunkIdx, start, end, linesLoaded: lines.length });
         const text = lines.join('\n');
-        // Replace full placeholder span: (start+1,1) -> (end+1,1)
         const startLineNumber = start + 1;
         const replaceEndLinePlusOne = end + 1;
-        model.applyEdits([
-          {
-            range: new monaco.Range(startLineNumber, 1, replaceEndLinePlusOne, 1),
-            text: text + (replaceEndLinePlusOne <= model.getLineCount() ? '\n' : ''),
-            forceMoveMarkers: false,
-          }
-        ]);
+        model.applyEdits([{
+          range: new monaco.Range(startLineNumber, 1, replaceEndLinePlusOne, 1),
+          text: text + (replaceEndLinePlusOne <= model.getLineCount() ? '\n' : ''),
+          forceMoveMarkers: false,
+        }]);
         loadedChunksRef.current.add(chunkIdx);
       }
     } catch (e) {
@@ -87,12 +91,12 @@ function Editor({
     }
   }, [isVirtual, virtualChunkSize, onRequestLines, virtualFileMeta, monaco]);
 
-  // Load all chunks covering a range
-  const ensureRangeLoaded = useCallback((startLineZero, endLineZero) => {
+  // Load all chunks covering a range (now passes generation)
+  const ensureRangeLoaded = useCallback((startLineZero, endLineZero, generation) => {
     if (!isVirtual) return;
     const startChunk = Math.floor(startLineZero / virtualChunkSize);
-    const endChunk = Math.floor((endLineZero) / virtualChunkSize);
-    for (let c = startChunk; c <= endChunk; c++) loadChunk(c);
+    const endChunk = Math.floor(endLineZero / virtualChunkSize);
+    for (let c = startChunk; c <= endChunk; c++) loadChunk(c, generation);
   }, [isVirtual, virtualChunkSize, loadChunk]);
 
   // Virtualization viewport handler
@@ -113,7 +117,10 @@ function Editor({
     const prev = lastViewportRef.current;
     if (Math.abs(bufferedStart - prev.start) < 50 && Math.abs(bufferedEnd - prev.end) < 50) return;
     lastViewportRef.current = { start: bufferedStart, end: bufferedEnd };
-    ensureRangeLoaded(bufferedStart, bufferedEnd);
+
+    // New viewport cycle: bump generation once (not per chunk)
+    const gen = ++generationRef.current;
+    ensureRangeLoaded(bufferedStart, bufferedEnd, gen);
     // Immediate eviction of far-away chunks
     if (virtualEvictDistanceChunks >= 0) {
       const startChunkBuffered = Math.floor(bufferedStart / virtualChunkSize);
@@ -386,6 +393,8 @@ function Editor({
           wordWrap: 'on',
           scrollBeyondLastLine: false,
           readOnly: false,
+          // Disable occurrences (word) highlighting to avoid known Monaco dispose race throwing uncaught Error during rapid model swaps
+          occurrencesHighlight: false,
         }}
         onMount={handleEditorDidMount}
       />

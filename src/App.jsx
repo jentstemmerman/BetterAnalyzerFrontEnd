@@ -386,12 +386,17 @@ function App() {
 
                 if (lines.length !== len)
                    console.error(`onRequestLines failed got ${lines.length} instead of ${len}`);
-                else
-                  console.log(`onRequestLines succeeded got ${lines.length}`);
+               // else
+               //   console.log(`onRequestLines succeeded got ${lines.length} lines, first line starts with:`, lines[0].slice(0,60));
 
-                if (lines.length && lines[lines.length - 1] === '') lines.pop();
+                if (lines.length && lines[lines.length - 1] === '') 
+                {
+                  console.log(`lines.pop`);
+                  lines.pop();
+                }
                 return lines;
-              } catch (e) {
+              } 
+              catch (e) {
                 console.warn('onRequestLines failed', e);
                 return [];
               }

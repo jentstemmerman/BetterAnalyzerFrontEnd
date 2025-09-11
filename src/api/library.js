@@ -52,11 +52,7 @@ export const fetchFileLines = async (fileName, userId, startLine, fileSize, numb
       let lines = text2.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
 
       if (lines.length !== numberOfLines)
-        console.error(`onRequestLines failed got ${lines.length} instead of ${len}`);
-      else
-        console.log(`onRequestLines succeeded got ${lines.length}`);
-
-
+        console.error(`onRequestLines failed got ${lines.length} instead of ${numberOfLines}`);
 
 
       return { text: text, start: start, size: size };
