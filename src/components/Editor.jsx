@@ -54,7 +54,7 @@ function Editor({
     try {
       const lines = await onRequestLines(start, end);
       if (myGeneration !== generationRef.current) {
-        console.warn('[virtual] stale chunk (new viewport)', { chunkIdx, myGeneration, currentGeneration: generationRef.current });
+        //console.warn('[virtual] stale chunk (new viewport)', { chunkIdx, myGeneration, currentGeneration: generationRef.current });
         return;
       }
       const expected = end - start;

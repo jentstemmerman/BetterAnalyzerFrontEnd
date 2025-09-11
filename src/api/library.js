@@ -41,7 +41,7 @@ export const fetchFileLines = async (fileName, userId, startLine, fileSize, numb
         params: { start: startLine, size: numberOfLines, userId: userId },
       });
       const endTime = Date.now();
-      console.log(`fetchFileLines: getlines call took ${endTime - startTime} ms`);
+      //console.log(`fetchFileLines: getlines call took ${endTime - startTime} ms`);
       const { text, start, size } = response.data;
       
       
