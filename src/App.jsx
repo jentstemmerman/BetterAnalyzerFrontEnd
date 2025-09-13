@@ -412,6 +412,7 @@ function App() {
             width={minimapWidth}
             onResizeWidth={setMinimapWidth}
             theme={theme}
+            totalLines={useVirtual && fileMeta ? fileMeta.numberOfLines : docContent.length}
             onNavigate={(line) => {
               if (editorApiRef.current && editorApiRef.current.setCursorToLine) {
                 editorApiRef.current.setCursorToLine(line);
