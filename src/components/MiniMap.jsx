@@ -13,6 +13,7 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
   const containerRef = useRef(null);
   const dragRef = useRef({ active: false, startX: 0, startWidth: width });
   const [internalWidth, setInternalWidth] = useState(width);
+  const [hoverInfo, setHoverInfo] = useState(null); // { line, type, top }
 
   // Sync external width prop to internal state
   useEffect(() => { setInternalWidth(width); }, [width]);
@@ -84,7 +85,9 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
           }
         }}
       />
-      <div className="minimap minimap-abs" style={{ flex: '1 1 auto', position: 'relative' }}>
+      <div className="minimap minimap-abs" style={{ flex: '1 1 auto', position: 'relative' }}
+        onMouseLeave={() => setHoverInfo(null)}
+      >
         {renderAllLines && content.map((_, idx) => {
           const type = highlightMap[idx];
           const baseColor = type ? getColorForType(type) : (theme === 'light' ? '#ffffff' : 'var(--border)');
@@ -97,6 +100,9 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
               style={{
                 position: 'absolute', top: `${topPct}%`, height: `${heightPct}%`, left: 0, right: 0,
                 background: baseColor, opacity: type ? 0.7 : 0.25
+              }}
+              onMouseEnter={(e) => {
+                setHoverInfo({ line: idx, type, top: topPct });
               }}
               onClick={() => onNavigate && onNavigate(idx)}
               role={onNavigate ? 'button' : undefined}
@@ -123,6 +129,7 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
                   position: 'absolute', top: `${topPct}%`, height: `${heightPct}%`, left: 0, right: 0,
                   background: getColorForType(h.type), opacity: 0.8, boxShadow: '0 0 1px rgba(0,0,0,0.4)'
                 }}
+                onMouseEnter={() => setHoverInfo({ line: h.line, type: h.type, top: topPct })}
                 onClick={() => onNavigate && onNavigate(h.line)}
                 role={onNavigate ? 'button' : undefined}
                 tabIndex={onNavigate ? 0 : undefined}
@@ -134,6 +141,35 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
               />
             );
           })
+        )}
+        {hoverInfo && (
+          <div
+            className="minimap-tooltip"
+            style={{
+              position: 'absolute',
+              left: '100%',
+              top: `${hoverInfo.top}%`,
+              transform: 'translateY(-50%)',
+              background: 'var(--bg-alt)',
+              color: 'var(--text)',
+              border: '1px solid var(--border)',
+              padding: '4px 8px',
+              fontSize: '0.65rem',
+              lineHeight: 1.2,
+              borderRadius: 4,
+              boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+              zIndex: 10,
+              pointerEvents: 'auto',
+              whiteSpace: 'nowrap'
+            }}
+            onMouseLeave={() => setHoverInfo(null)}
+            onClick={() => { if (onNavigate) onNavigate(hoverInfo.line); setHoverInfo(null); }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && onNavigate) { e.preventDefault(); onNavigate(hoverInfo.line); setHoverInfo(null); } }}
+          >
+            Line {hoverInfo.line + 1}{hoverInfo.type ? ` • ${hoverInfo.type}` : ''}
+          </div>
         )}
       </div>
     </div>
