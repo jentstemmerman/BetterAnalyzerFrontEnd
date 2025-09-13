@@ -1,14 +1,38 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 
 const MIN_MINIMAP_WIDTH = 12; // even slimmer
 const MAX_MINIMAP_WIDTH = 240; // allow a bit wider if user wants
 
 function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, onResizeWidth, theme, totalLines = null }) {
-  // Map line numbers to highlight type
-  const highlightMap = {};
-  highlights.forEach(h => {
-    highlightMap[h.line] = h.type;
-  });
+  // Map line numbers to highlight type & contiguous span info
+  const { highlightMap, spanMap } = useMemo(() => {
+    const hMap = {};
+    const spanM = {};
+    if (!highlights || !highlights.length) return { highlightMap: hMap, spanMap: spanM };
+    const sorted = [...highlights].sort((a, b) => a.line - b.line || a.type.localeCompare(b.type));
+    let curStart = sorted[0].line;
+    let curEnd = sorted[0].line;
+    let curType = sorted[0].type;
+    const flush = () => {
+      for (let l = curStart; l <= curEnd; l++) {
+        hMap[l] = curType;
+        spanM[l] = { start: curStart, end: curEnd, type: curType };
+      }
+    };
+    for (let i = 1; i < sorted.length; i++) {
+      const h = sorted[i];
+      if (h.type === curType && h.line === curEnd + 1) {
+        curEnd = h.line; // extend span
+      } else {
+        flush();
+        curStart = h.line;
+        curEnd = h.line;
+        curType = h.type;
+      }
+    }
+    flush();
+    return { highlightMap: hMap, spanMap: spanM };
+  }, [highlights]);
 
   const containerRef = useRef(null);
   const dragRef = useRef({ active: false, startX: 0, startWidth: width });
@@ -102,15 +126,26 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
                 background: baseColor, opacity: type ? 0.7 : 0.25
               }}
               onMouseEnter={(e) => {
-                setHoverInfo({ line: idx, type, top: topPct });
+                if (type && spanMap[idx]) {
+                  const s = spanMap[idx];
+                  setHoverInfo({ line: idx, type, top: topPct, spanStart: s.start, spanEnd: s.end });
+                } else {
+                  setHoverInfo({ line: idx, type, top: topPct });
+                }
               }}
-              onClick={() => onNavigate && onNavigate(idx)}
+              onClick={() => {
+                if (!onNavigate) return;
+                if (type && spanMap[idx]) onNavigate(spanMap[idx].start); else onNavigate(idx);
+              }}
               role={onNavigate ? 'button' : undefined}
               tabIndex={onNavigate ? 0 : undefined}
               aria-label={onNavigate ? `Jump to line ${idx + 1}` : undefined}
               onKeyDown={(e) => {
                 if (!onNavigate) return;
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate(idx); }
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  if (type && spanMap[idx]) onNavigate(spanMap[idx].start); else onNavigate(idx);
+                }
               }}
             />
           );
@@ -129,14 +164,26 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
                   position: 'absolute', top: `${topPct}%`, height: `${heightPct}%`, left: 0, right: 0,
                   background: getColorForType(h.type), opacity: 0.8, boxShadow: '0 0 1px rgba(0,0,0,0.4)'
                 }}
-                onMouseEnter={() => setHoverInfo({ line: h.line, type: h.type, top: topPct })}
-                onClick={() => onNavigate && onNavigate(h.line)}
+                onMouseEnter={() => {
+                  const span = spanMap[h.line];
+                  if (span) setHoverInfo({ line: h.line, type: h.type, top: topPct, spanStart: span.start, spanEnd: span.end });
+                  else setHoverInfo({ line: h.line, type: h.type, top: topPct });
+                }}
+                onClick={() => {
+                  if (!onNavigate) return;
+                  const span = spanMap[h.line];
+                  if (span) onNavigate(span.start); else onNavigate(h.line);
+                }}
                 role={onNavigate ? 'button' : undefined}
                 tabIndex={onNavigate ? 0 : undefined}
                 aria-label={onNavigate ? `Jump to line ${h.line + 1}` : undefined}
                 onKeyDown={(e) => {
                   if (!onNavigate) return;
-                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate(h.line); }
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    const span = spanMap[h.line];
+                    if (span) onNavigate(span.start); else onNavigate(h.line);
+                  }
                 }}
               />
             );
@@ -163,12 +210,17 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
               whiteSpace: 'nowrap'
             }}
             onMouseLeave={() => setHoverInfo(null)}
-            onClick={() => { if (onNavigate) onNavigate(hoverInfo.line); setHoverInfo(null); }}
+            onClick={() => { if (onNavigate) {
+              if (hoverInfo.spanStart !== undefined) onNavigate(hoverInfo.spanStart); else onNavigate(hoverInfo.line);
+            } setHoverInfo(null); }}
             role="button"
             tabIndex={0}
-            onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && onNavigate) { e.preventDefault(); onNavigate(hoverInfo.line); setHoverInfo(null); } }}
+            onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && onNavigate) { e.preventDefault(); if (hoverInfo.spanStart !== undefined) onNavigate(hoverInfo.spanStart); else onNavigate(hoverInfo.line); setHoverInfo(null); } }}
           >
-            Line {hoverInfo.line + 1}{hoverInfo.type ? ` • ${hoverInfo.type}` : ''}
+            {hoverInfo.spanStart !== undefined && hoverInfo.spanEnd !== undefined && hoverInfo.spanEnd !== hoverInfo.spanStart
+              ? `Lines ${hoverInfo.spanStart + 1}-${hoverInfo.spanEnd + 1}`
+              : `Line ${hoverInfo.line + 1}`}
+            {hoverInfo.type ? ` • ${hoverInfo.type}` : ''}
           </div>
         )}
       </div>

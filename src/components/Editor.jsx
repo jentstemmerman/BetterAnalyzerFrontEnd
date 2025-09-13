@@ -325,7 +325,7 @@ function Editor({
     return lines;
   }, []);
 
-  const setCursorToLine = useCallback((zeroBasedLine) => {
+  const setCursorToLine = useCallback((zeroBasedLine, opts = {}) => {
     const editor = editorRef.current;
     if (!editor || typeof zeroBasedLine !== 'number') return;
     const model = editor.getModel();
@@ -333,15 +333,46 @@ function Editor({
     const max = model.getLineCount() - 1;
     const clamped = Math.max(0, Math.min(max, zeroBasedLine));
     const lineNumber = clamped + 1; // monaco is 1-based
+    const desiredTopPaddingRatio = typeof opts.topPaddingRatio === 'number' ? opts.topPaddingRatio : 0.15; // 15% from top
     try {
       editor.setSelection({ startLineNumber: lineNumber, startColumn: 1, endLineNumber: lineNumber, endColumn: 1 });
-      editor.revealLineInCenterIfOutsideViewport(lineNumber, 1 /* scrollType Smooth */);
+      // Custom scroll: compute target scrollTop so line sits ~15% below top
+      const layoutInfo = editor.getLayoutInfo();
+      const lineHeight = editor.getOption?.(monaco.editor.EditorOption.lineHeight) || 18;
+      const viewHeight = layoutInfo?.height || editor.getDomNode()?.clientHeight || 0;
+      const topPadLines = Math.floor((viewHeight * desiredTopPaddingRatio) / lineHeight);
+      const targetTopLine = Math.max(1, lineNumber - topPadLines);
+      // Use revealRangeNearTop if available (Monaco 0.42+); fallback to manual scroll if not.
+      const range = new monaco.Range(targetTopLine, 1, targetTopLine, 1);
+      if (editor.revealRangeNearTop) {
+        editor.revealRangeNearTop(range, monaco.editor.ScrollType.Smooth);
+      } else if (editor.revealLineNearTop) {
+        editor.revealLineNearTop(targetTopLine, monaco.editor.ScrollType.Smooth);
+      } else {
+        editor.revealLineInCenterIfOutsideViewport(lineNumber, monaco.editor.ScrollType.Smooth);
+      }
+      // Post-adjustment: enforce approximate offset using scrollTop math if API didn't place it
+      try {
+        const viewLines = editor.getVisibleRanges()?.[0];
+        if (viewLines) {
+          const firstVisible = viewLines.startLineNumber;
+          const currentOffsetLines = lineNumber - firstVisible;
+          const desiredOffsetLines = topPadLines;
+          if (Math.abs(currentOffsetLines - desiredOffsetLines) > 2) { // tolerance
+            const scrollTop = editor.getScrollTop();
+            const deltaLines = (desiredOffsetLines - currentOffsetLines);
+            const newScrollTop = scrollTop - deltaLines * lineHeight;
+            editor.setScrollTop(newScrollTop);
+          }
+        }
+      } catch {}
+      // Final visibility assurance
+      editor.revealLine(lineNumber, monaco.editor.ScrollType.Smooth);
       editor.focus();
     } catch (e) {
-      // non-fatal
       console.warn('setCursorToLine failed', e);
     }
-  }, []);
+  }, [monaco]);
 
   // Expose lightweight API to parent (selection helpers)
   useEffect(() => {
