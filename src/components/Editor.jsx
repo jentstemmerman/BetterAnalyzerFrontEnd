@@ -43,15 +43,9 @@ function Editor({
   const scheduleDecorationRefresh = useCallback((reason = 'unknown') => {
     if (!editorRef.current) return;
     if (decorationRefreshRafRef.current) cancelAnimationFrame(decorationRefreshRafRef.current);
-    try { console.log('[decorations] scheduleDecorationRefresh queued', { reason }); } catch {}
     decorationRefreshRafRef.current = requestAnimationFrame(() => {
       try {
-        if (updateDecorationsRef.current) {
-          console.log('[decorations] scheduleDecorationRefresh executing', { reason });
-          updateDecorationsRef.current(reason);
-        } else {
-          console.log('[decorations] scheduleDecorationRefresh skipped (ref null)', { reason });
-        }
+        if (updateDecorationsRef.current) updateDecorationsRef.current(reason);
       } catch (e) {
         console.warn('[decorations] scheduleDecorationRefresh failed', reason, e);
       }
@@ -74,10 +68,7 @@ function Editor({
 
     try {
       const lines = await onRequestLines(start, end);
-      if (myGeneration !== generationRef.current) {
-        console.warn('[virtual] stale chunk (new viewport) discard', { chunkIdx, myGeneration, currentGeneration: generationRef.current });
-        return;
-      }
+      if (myGeneration !== generationRef.current) return; // stale
       const expected = end - start;
       if (!Array.isArray(lines) || lines.length !== expected) {
         console.error('[virtual] chunk size mismatch – server bug', { chunkIdx, start, end, expected, got: Array.isArray(lines) ? lines.length : 'non-array' });
@@ -146,16 +137,6 @@ function Editor({
       // Minor scroll ignored
       return;
     }
-    console.log('[virtual] viewportChange', {
-      prevStart: prevViewport.start,
-      prevEnd: prevViewport.end,
-      bufferedStart,
-      bufferedEnd,
-      rawStart: start,
-      rawEnd: end,
-      total,
-      prevGeneration: generationRef.current
-    });
     lastViewportRef.current = { start: bufferedStart, end: bufferedEnd };
 
     // New viewport cycle: bump generation once (not per chunk)
@@ -229,8 +210,6 @@ function Editor({
 
   // Robust decorations logic
   const updateDecorations = useCallback((reason = 'unknown') => {
-    const t0 = performance.now();
-    console.log('[decorations] updateDecorations start', { reason, totalHighlights: highlights.length });
     const editor = editorRef.current;
     if (!monaco || !editor) return;
     try {
@@ -238,18 +217,13 @@ function Editor({
       if (!model) return;
       const lineCount = model.getLineCount();
       const valid = highlights.filter(h => Number.isInteger(h.line) && h.line >= 0 && h.line < lineCount);
-      if (valid.length !== highlights.length) {
-        console.warn('[decorations] filtered invalid highlights', { originalCount: highlights.length, validCount: valid.length, lineCount });
-      }
+      if (valid.length !== highlights.length) console.warn('[decorations] filtered invalid highlights', { originalCount: highlights.length, validCount: valid.length, lineCount });
       // Always fully clear previous decorations first to prevent stale color flashes
       if (decorationIdsRef.current.length) {
         try { editor.deltaDecorations(decorationIdsRef.current, []); } catch {}
         decorationIdsRef.current = [];
       }
-      if (!valid.length) {
-        console.log('[decorations] no valid highlights to apply', { reason });
-        return; // nothing to apply
-      }
+      if (!valid.length) return; // nothing to apply
       const decorations = valid.map(h => {
         const lineNumber = h.line + 1;
         const endCol = Math.max(1, model.getLineMaxColumn(lineNumber));
@@ -265,16 +239,6 @@ function Editor({
       try {
         const newIds = editor.deltaDecorations([], decorations);
         decorationIdsRef.current = newIds;
-        const appliedLines = valid.map(v => v.line).sort((a,b) => a-b);
-        console.log('[decorations] applied', {
-          reason,
-          appliedCount: appliedLines.length,
-          sampleFirst: appliedLines.slice(0, 25),
-          min: appliedLines[0],
-          max: appliedLines[appliedLines.length - 1],
-          modelLineCount: lineCount,
-          durationMs: (performance.now() - t0).toFixed(2)
-        });
       } catch (e) {
         if (e && e.type === 'cancelation') return;
         console.error('[decorations] delta apply failed', e);
