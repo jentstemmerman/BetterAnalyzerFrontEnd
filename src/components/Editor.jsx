@@ -36,6 +36,27 @@ function Editor({
   const requestInflightRef = useRef(0);
   // Replaces requestVersionRef: now a "viewport generation" incremented once per viewport change
   const generationRef = useRef(0);
+  const decorationRefreshRafRef = useRef(0);
+  const updateDecorationsRef = useRef(null);
+
+  // Debounced decorations refresher used by virtualization events (chunk loads, viewport enters)
+  const scheduleDecorationRefresh = useCallback((reason = 'unknown') => {
+    if (!editorRef.current) return;
+    if (decorationRefreshRafRef.current) cancelAnimationFrame(decorationRefreshRafRef.current);
+    try { console.log('[decorations] scheduleDecorationRefresh queued', { reason }); } catch {}
+    decorationRefreshRafRef.current = requestAnimationFrame(() => {
+      try {
+        if (updateDecorationsRef.current) {
+          console.log('[decorations] scheduleDecorationRefresh executing', { reason });
+          updateDecorationsRef.current(reason);
+        } else {
+          console.log('[decorations] scheduleDecorationRefresh skipped (ref null)', { reason });
+        }
+      } catch (e) {
+        console.warn('[decorations] scheduleDecorationRefresh failed', reason, e);
+      }
+    });
+  }, []);
 
   // Helper: load a chunk (by chunk index) in virtualization mode
   const loadChunk = useCallback(async (chunkIdx, generation) => {
@@ -54,7 +75,7 @@ function Editor({
     try {
       const lines = await onRequestLines(start, end);
       if (myGeneration !== generationRef.current) {
-        //console.warn('[virtual] stale chunk (new viewport)', { chunkIdx, myGeneration, currentGeneration: generationRef.current });
+        console.warn('[virtual] stale chunk (new viewport) discard', { chunkIdx, myGeneration, currentGeneration: generationRef.current });
         return;
       }
       const expected = end - start;
@@ -82,6 +103,11 @@ function Editor({
           forceMoveMarkers: false,
         }]);
         loadedChunksRef.current.add(chunkIdx);
+        // Always refresh once after a chunk applies (cheap due to debouncing); record if contains highlight.
+        const containsHighlight = highlights.some(h => h.line >= start && h.line < end);
+        scheduleDecorationRefresh('chunk:' + chunkIdx + (containsHighlight ? ':withHighlight' : ''));
+        // Secondary delayed refresh to catch Monaco layout passes or late style injection
+        setTimeout(() => scheduleDecorationRefresh('chunkPost:' + chunkIdx), 40);
       }
     } catch (e) {
       console.warn('[virtual] failed loading chunk', chunkIdx, e);
@@ -89,7 +115,7 @@ function Editor({
       pendingChunksRef.current.delete(chunkIdx);
       requestInflightRef.current -= 1;
     }
-  }, [isVirtual, virtualChunkSize, onRequestLines, virtualFileMeta, monaco]);
+  }, [isVirtual, virtualChunkSize, onRequestLines, virtualFileMeta, monaco, highlights, scheduleDecorationRefresh]);
 
   // Load all chunks covering a range (now passes generation)
   const ensureRangeLoaded = useCallback((startLineZero, endLineZero, generation) => {
@@ -114,13 +140,37 @@ function Editor({
     const total = virtualFileMeta.numberOfLines;
     const bufferedStart = Math.max(0, start - virtualPreload);
     const bufferedEnd = Math.min(total - 1, end + virtualPreload);
-    const prev = lastViewportRef.current;
-    if (Math.abs(bufferedStart - prev.start) < 50 && Math.abs(bufferedEnd - prev.end) < 50) return;
+    // Keep a reference to the previous viewport BEFORE updating so we can compare highlight presence
+    const prevViewport = lastViewportRef.current;
+    if (Math.abs(bufferedStart - prevViewport.start) < 50 && Math.abs(bufferedEnd - prevViewport.end) < 50) {
+      // Minor scroll ignored
+      return;
+    }
+    console.log('[virtual] viewportChange', {
+      prevStart: prevViewport.start,
+      prevEnd: prevViewport.end,
+      bufferedStart,
+      bufferedEnd,
+      rawStart: start,
+      rawEnd: end,
+      total,
+      prevGeneration: generationRef.current
+    });
     lastViewportRef.current = { start: bufferedStart, end: bufferedEnd };
 
     // New viewport cycle: bump generation once (not per chunk)
     const gen = ++generationRef.current;
-    ensureRangeLoaded(bufferedStart, bufferedEnd, gen);
+  ensureRangeLoaded(bufferedStart, bufferedEnd, gen);
+  // Fallback refresh after big viewport jump (decorations after chunk load)
+  setTimeout(() => scheduleDecorationRefresh('viewportPostTimeout'), 80);
+  setTimeout(() => scheduleDecorationRefresh('viewportPostTimeoutLong'), 250);
+
+    // If new viewport includes highlight lines not previously visible, refresh
+    const hasViewportHighlights = highlights.some(h => h.line >= bufferedStart && h.line <= bufferedEnd);
+    const prevHad = highlights.some(h => h.line >= prevViewport.start && h.line <= prevViewport.end);
+    if (hasViewportHighlights && !prevHad) {
+      scheduleDecorationRefresh('viewportEnter');
+    }
     // Immediate eviction of far-away chunks
     if (virtualEvictDistanceChunks >= 0) {
       const startChunkBuffered = Math.floor(bufferedStart / virtualChunkSize);
@@ -156,7 +206,7 @@ function Editor({
         }
       }
     }
-  }, [isVirtual, ensureRangeLoaded, virtualFileMeta, virtualPreload, virtualEvictDistanceChunks, virtualChunkSize]);
+  }, [isVirtual, ensureRangeLoaded, virtualFileMeta, virtualPreload, virtualEvictDistanceChunks, virtualChunkSize, highlights, scheduleDecorationRefresh]);
 
   // Store editor instance on mount
   const handleEditorDidMount = (editor) => {
@@ -179,6 +229,8 @@ function Editor({
 
   // Robust decorations logic
   const updateDecorations = useCallback((reason = 'unknown') => {
+    const t0 = performance.now();
+    console.log('[decorations] updateDecorations start', { reason, totalHighlights: highlights.length });
     const editor = editorRef.current;
     if (!monaco || !editor) return;
     try {
@@ -187,7 +239,7 @@ function Editor({
       const lineCount = model.getLineCount();
       const valid = highlights.filter(h => Number.isInteger(h.line) && h.line >= 0 && h.line < lineCount);
       if (valid.length !== highlights.length) {
-        console.warn('[decorations] filtered invalid highlights', { original: highlights, valid, lineCount });
+        console.warn('[decorations] filtered invalid highlights', { originalCount: highlights.length, validCount: valid.length, lineCount });
       }
       // Always fully clear previous decorations first to prevent stale color flashes
       if (decorationIdsRef.current.length) {
@@ -195,6 +247,7 @@ function Editor({
         decorationIdsRef.current = [];
       }
       if (!valid.length) {
+        console.log('[decorations] no valid highlights to apply', { reason });
         return; // nothing to apply
       }
       const decorations = valid.map(h => {
@@ -212,6 +265,16 @@ function Editor({
       try {
         const newIds = editor.deltaDecorations([], decorations);
         decorationIdsRef.current = newIds;
+        const appliedLines = valid.map(v => v.line).sort((a,b) => a-b);
+        console.log('[decorations] applied', {
+          reason,
+          appliedCount: appliedLines.length,
+          sampleFirst: appliedLines.slice(0, 25),
+          min: appliedLines[0],
+          max: appliedLines[appliedLines.length - 1],
+          modelLineCount: lineCount,
+          durationMs: (performance.now() - t0).toFixed(2)
+        });
       } catch (e) {
         if (e && e.type === 'cancelation') return;
         console.error('[decorations] delta apply failed', e);
@@ -225,6 +288,9 @@ function Editor({
       console.error('[decorations] error', serialized, e);
     }
   }, [monaco, highlights, highlightTypes]);
+
+  // Sync the ref AFTER updateDecorations is defined to avoid temporal dead zone
+  useEffect(() => { updateDecorationsRef.current = updateDecorations; }, [updateDecorations]);
 
   // Unified decorations scheduler effect (skip content dependency in virtual mode to avoid massive re-renders)
   useEffect(() => {
