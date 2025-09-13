@@ -94,11 +94,8 @@ function Editor({
           forceMoveMarkers: false,
         }]);
         loadedChunksRef.current.add(chunkIdx);
-        // Always refresh once after a chunk applies (cheap due to debouncing); record if contains highlight.
-        const containsHighlight = highlights.some(h => h.line >= start && h.line < end);
-        scheduleDecorationRefresh('chunk:' + chunkIdx + (containsHighlight ? ':withHighlight' : ''));
-        // Secondary delayed refresh to catch Monaco layout passes or late style injection
-        setTimeout(() => scheduleDecorationRefresh('chunkPost:' + chunkIdx), 40);
+        // Single refresh after chunk applies (debounced by RAF)
+        scheduleDecorationRefresh('chunk:' + chunkIdx);
       }
     } catch (e) {
       console.warn('[virtual] failed loading chunk', chunkIdx, e);
@@ -142,9 +139,6 @@ function Editor({
     // New viewport cycle: bump generation once (not per chunk)
     const gen = ++generationRef.current;
   ensureRangeLoaded(bufferedStart, bufferedEnd, gen);
-  // Fallback refresh after big viewport jump (decorations after chunk load)
-  setTimeout(() => scheduleDecorationRefresh('viewportPostTimeout'), 80);
-  setTimeout(() => scheduleDecorationRefresh('viewportPostTimeoutLong'), 250);
 
     // If new viewport includes highlight lines not previously visible, refresh
     const hasViewportHighlights = highlights.some(h => h.line >= bufferedStart && h.line <= bufferedEnd);
