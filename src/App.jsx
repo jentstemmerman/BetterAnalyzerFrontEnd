@@ -4,7 +4,7 @@ import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
 import HighlightSelector from './components/HighlightSelector';
 import DocumentSelector from './components/DocumentSelector';
-import { GetServerDirectoryListing, getMetadata, fetchFileLines } from './api/library';
+import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile } from './api/library';
 
 const exampleDocuments = [
   {
@@ -51,6 +51,7 @@ function App() {
   const [nextLineToLoad, setNextLineToLoad] = useState(0);
   const [isLoadingLines, setIsLoadingLines] = useState(false);
   const [useVirtual, setUseVirtual] = useState(false); // enable monaco viewport-driven loading
+  const [analyzeStatus, setAnalyzeStatus] = useState({ running: false, progress: null, file: null, error: null });
   const fileLoadIdRef = React.useRef(0);
   const nextLineRef = React.useRef(0);
   const isLoadingRef = React.useRef(false);
@@ -280,6 +281,24 @@ function App() {
      console.log('loadMoreLines end');
   }, [fileMeta, userId, useVirtual]);
 
+  const handleAnalyze = useCallback(async () => {
+    const targetFile = currentServerFile?.fileName || exampleDocuments[selectedDocIdx]?.name;
+    if (!targetFile) return;
+    if (analyzeStatus.running) return; // prevent duplicate starts
+    setAnalyzeStatus({ running: true, progress: { message: 'Starting…', pct: 0 }, file: targetFile, error: null });
+    try {
+      // Provide a progress callback the websocket handler can call later (once integrated fully)
+      const progressCb = (update) => {
+        // Expect update shape maybe { pct, message }
+        setAnalyzeStatus(prev => prev.running ? { ...prev, progress: update } : prev);
+      };
+      await AnalyzeFile(targetFile, userId, progressCb);
+      // Since AnalyzeFile currently returns null immediately, we simulate ongoing progress until websocket events arrive.
+    } catch (e) {
+      setAnalyzeStatus({ running: false, progress: null, file: targetFile, error: 'Failed to start analysis' });
+    }
+  }, [currentServerFile, selectedDocIdx, exampleDocuments, userId, analyzeStatus.running]);
+
   return (
     <div className="app-container">
       <header className="app-header">
@@ -320,7 +339,19 @@ function App() {
               </select>
             </label>
           </div>
-          <button className="analyse-btn">Analyse</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button className="analyse-btn" onClick={handleAnalyze} disabled={analyzeStatus.running}>
+              {analyzeStatus.running ? 'Analysing…' : 'Analyse'}
+            </button>
+            {analyzeStatus.running && analyzeStatus.progress && (
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-soft)' }}>
+                {analyzeStatus.progress.pct !== undefined ? `${Math.round(analyzeStatus.progress.pct)}% ` : ''}{analyzeStatus.progress.message || ''}
+              </span>
+            )}
+            {analyzeStatus.error && !analyzeStatus.running && (
+              <span style={{ fontSize: '0.7rem', color: 'var(--danger, #e57373)' }}>{analyzeStatus.error}</span>
+            )}
+          </div>
           <button
             className="theme-toggle-btn"
             onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
