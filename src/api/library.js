@@ -104,14 +104,25 @@ export const getMetadata = async (fileName, userId) => {
 export const AnalyzeFile = async (fileName, userId, progressUpdate) => {
   try {
     const requestString = `${backendUrl}/api/file/analyze_file/${fileName}`;
-    const webSocketHandler = new WebSocketHandler(backendUrl, userId, AnalyzeFileProgressUpdate);
-    webSocketHandlers.set(fileName, webSocketHandler);
+    let webSocketHandler = webSocketHandlers.get(fileName);
+    if (!webSocketHandler) {
+      webSocketHandler = new WebSocketHandler(backendUrl, userId, AnalyzeFileProgressUpdate);
+      webSocketHandlers.set(fileName, webSocketHandler);
+    }
+    if (webSocketHandler) {
+      // Provide a bridge so server events push into caller's callback
+      webSocketHandler.setProgressUpdate = (update) => {
+        if (typeof progressUpdate === 'function') {
+          try { progressUpdate(update); } catch {}
+        }
+      };
+    }
     axios.get(requestString, {
       params: { userId: userId, modelDirectory: 'model', tokenDirectory: 'TokenDirectory_1' },
     });
     return null;
   } catch (error) {
-    console.error('Failed to fetch metadata:', error);
+    console.error('Failed to start analysis:', error);
     return null;
   }
 };
