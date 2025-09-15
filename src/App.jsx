@@ -289,8 +289,25 @@ function App() {
     try {
       // Provide a progress callback the websocket handler can call later (once integrated fully)
       const progressCb = (update) => {
-        // Expect update shape maybe { pct, message }
-        setAnalyzeStatus(prev => prev.running ? { ...prev, progress: update } : prev);
+        // Expect update shape maybe { pct, message/status, error }
+        setAnalyzeStatus(prev => {
+          if (!prev.running) return prev;
+          const pct = update?.pct;
+          const statusText = update?.message || update?.status;
+          const isComplete = (typeof pct === 'number' && pct >= 100) || /done|complete|finished/i.test(statusText || '');
+          if (update?.error) {
+            return { running: false, progress: null, file: prev.file, error: update.error || 'Analysis failed' };
+          }
+          if (isComplete) {
+            // Briefly show 100% then reset to idle state after a short delay
+            // Keep internal progress but schedule reset
+            setTimeout(() => {
+              setAnalyzeStatus(current => current.file === prev.file ? { running: false, progress: null, file: prev.file, error: null } : current);
+            }, 600);
+            return { ...prev, progress: { ...update, pct: 100, message: statusText || 'Complete' } };
+          }
+            return { ...prev, progress: update };
+        });
       };
       await AnalyzeFile(targetFile, userId, progressCb);
       // Since AnalyzeFile currently returns null immediately, we simulate ongoing progress until websocket events arrive.
@@ -340,14 +357,30 @@ function App() {
             </label>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button className="analyse-btn" onClick={handleAnalyze} disabled={analyzeStatus.running}>
-              {analyzeStatus.running ? 'Analysing…' : 'Analyse'}
-            </button>
-            {analyzeStatus.running && analyzeStatus.progress && (
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-soft)' }}>
-                {analyzeStatus.progress.pct !== undefined ? `${Math.round(analyzeStatus.progress.pct)}% ` : ''}{analyzeStatus.progress.message || ''}
+            <button
+              className={`analyse-btn ${analyzeStatus.running ? 'is-running' : ''} ${analyzeStatus.running && (!analyzeStatus.progress || analyzeStatus.progress.pct == null) ? 'indeterminate' : ''} ${analyzeStatus.running && analyzeStatus.progress?.pct != null ? 'determinate' : ''}`}
+              onClick={handleAnalyze}
+              disabled={analyzeStatus.running}
+              aria-busy={analyzeStatus.running || undefined}
+              aria-live="polite"
+              aria-label={analyzeStatus.running
+                ? (analyzeStatus.progress?.pct != null
+                    ? `Analysing ${analyzeStatus.progress.pct.toFixed(0)} percent - ${analyzeStatus.progress.message || ''}`
+                    : `Analysing - ${analyzeStatus.progress?.message || 'in progress'}`)
+                : 'Analyse file'}
+            >
+              <span className="btn-progress-label">
+                {analyzeStatus.running ? 'Analysing…' : 'Analyse'}
               </span>
-            )}
+              {analyzeStatus.running && (
+                <span className="btn-progress-track" aria-hidden="true">
+                  <span
+                    className="btn-progress-fill"
+                    style={analyzeStatus.progress?.pct != null ? { width: `${Math.min(100, Math.max(0, analyzeStatus.progress.pct))}%` } : undefined}
+                  />
+                </span>
+              )}
+            </button>
             {analyzeStatus.error && !analyzeStatus.running && (
               <span style={{ fontSize: '0.7rem', color: 'var(--danger, #e57373)' }}>{analyzeStatus.error}</span>
             )}

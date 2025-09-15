@@ -67,6 +67,85 @@
   background: var(--accent-hover);
 }
 
+/* Analyse button progress embedding */
+.analyse-btn {
+  position: relative;
+  overflow: hidden; /* contain wipe layer */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 130px;
+  line-height: 1.1;
+  isolation: isolate; /* ensure blend effects stay inside */
+}
+.analyse-btn.is-running {
+  cursor: progress;
+}
+.analyse-btn .btn-progress-label {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  max-width: 100%;
+}
+/* Full-surface wipe layer */
+.analyse-btn .btn-progress-track {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: none;
+  z-index: 1;
+  pointer-events: none;
+}
+.analyse-btn .btn-progress-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 70%, #ffffff) 0%, var(--accent-hover) 40%, var(--accent) 100%);
+  mix-blend-mode: plus-lighter; /* subtle brightness effect over base */
+  opacity: 0.85;
+  transition: width 0.45s cubic-bezier(.4,.0,.2,1);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bg-alt) 55%, transparent), 0 0 6px -1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.analyse-btn.is-running .btn-progress-fill { width: 8%; } /* initial tiny sliver */
+.analyse-btn.is-running.determinate .btn-progress-fill {
+  /* Determinate mode: width set inline via style attribute; we add a subtle transition emphasis */
+  transition: width 0.45s cubic-bezier(.4,.0,.2,1), opacity 0.3s ease;
+  opacity: 0.9;
+}
+/* Indeterminate animation when pct unknown */
+@keyframes analyse-indeterminate {
+  0% { transform: translateX(-50%) scaleX(0.4); }
+  50% { transform: translateX(25%) scaleX(0.9); }
+  100% { transform: translateX(120%) scaleX(0.4); }
+}
+@keyframes analyse-wipe-indeterminate {
+  0% { transform: translateX(-60%) skewX(-6deg); width: 35%; }
+  40% { transform: translateX(10%) skewX(-6deg); width: 55%; }
+  70% { transform: translateX(55%) skewX(-6deg); width: 45%; }
+  100% { transform: translateX(130%) skewX(-6deg); width: 35%; }
+}
+.analyse-btn.is-running.indeterminate .btn-progress-fill {
+  width: 45%;
+  animation: analyse-wipe-indeterminate 1.4s ease-in-out infinite;
+  background: linear-gradient(120deg, var(--accent-hover) 0%, var(--accent) 55%, #ffffff 140%);
+  mix-blend-mode: normal;
+  opacity: 0.75;
+}
+.analyse-btn:disabled {
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+/* Ensure label stays above wipe */
+.analyse-btn .btn-progress-label { position: relative; z-index: 2; }
+
 .highlight-selector {
   display: flex;
   gap: 12px;
