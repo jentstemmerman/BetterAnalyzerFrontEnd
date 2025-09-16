@@ -316,6 +316,33 @@ function App() {
     }
   }, [currentServerFile, selectedDocIdx, exampleDocuments, userId, analyzeStatus.running]);
 
+  // Provide a stable handler for virtualized line requests (moved out of JSX)
+  const handleRequestLines = useCallback(async (start, end) => {
+    try {
+      if (!currentServerFile || !fileMeta) return [];
+      const len = end - start;
+      const res = await fetchFileLines(currentServerFile.fileName, userId, start, fileMeta.numberOfLines, len);
+      const text = (res && res.text) ? res.text : '';
+      let lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+
+      if (lines.length !== len)
+        console.error(`onRequestLines failed got ${lines.length} instead of ${len}`);
+      // else
+      //   console.log(`onRequestLines succeeded got ${lines.length} lines, first line starts with:`, lines[0].slice(0,60));
+
+      if (lines.length && lines[lines.length - 1] === '') 
+      {
+        console.log(`lines.pop`);
+        lines.pop();
+      }
+      return lines;
+    } 
+    catch (e) {
+      console.warn('onRequestLines failed', e);
+      return [];
+    }
+  }, [currentServerFile, fileMeta, userId]);
+
   return (
     <div className="app-container">
       <header className="app-header">
@@ -441,30 +468,7 @@ function App() {
             fontSize={fontSize}
             onRegisterApi={(api) => { editorApiRef.current = api; }}
             virtualFileMeta={useVirtual && currentServerFile && fileMeta ? fileMeta : null}
-            onRequestLines={useVirtual && currentServerFile && fileMeta ? async (start, end) => {
-              try {
-                const len = end - start;
-                const res = await fetchFileLines(currentServerFile.fileName, userId, start, fileMeta.numberOfLines, len);
-                const text = (res && res.text) ? res.text : '';
-                let lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-
-                if (lines.length !== len)
-                   console.error(`onRequestLines failed got ${lines.length} instead of ${len}`);
-               // else
-               //   console.log(`onRequestLines succeeded got ${lines.length} lines, first line starts with:`, lines[0].slice(0,60));
-
-                if (lines.length && lines[lines.length - 1] === '') 
-                {
-                  console.log(`lines.pop`);
-                  lines.pop();
-                }
-                return lines;
-              } 
-              catch (e) {
-                console.warn('onRequestLines failed', e);
-                return [];
-              }
-            } : null}
+            onRequestLines={useVirtual && currentServerFile && fileMeta ? handleRequestLines : null}
             virtualChunkSize={10000 / 10}
             virtualPreload={5000 / 10}
             virtualPlaceholderLines={useVirtual && fileMeta ? fileMeta.numberOfLines : null}
