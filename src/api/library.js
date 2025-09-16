@@ -42,7 +42,7 @@ export const fetchFileLines = async (fileName, userId, startLine, fileSize, numb
       });
       const endTime = Date.now();
       //console.log(`fetchFileLines: getlines call took ${endTime - startTime} ms`);
-      const { text, start, size } = response.data;
+      const { text, start, size, simularities } = response.data;
       
       
       
@@ -55,7 +55,7 @@ export const fetchFileLines = async (fileName, userId, startLine, fileSize, numb
         console.error(`onRequestLines failed got ${lines.length} instead of ${numberOfLines}`);
 
 
-      return { text: text, start: start, size: size };
+      return { text: text, start: start, size: size, simularities: simularities };
     } catch (error) {
       const endTime = Date.now();
       console.log(`fetchFileLines: getlines call failed after ${endTime - startTime} ms`);
