@@ -8,35 +8,23 @@ import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile } f
 
 const exampleDocuments = [
   {
-    name: 'Sample Document',
+    name: 'Empty Document',
     content: [
-      'This is a sample document.',
-      'You can edit this text.',
-      'Some lines are highlighted.',
-      'Try toggling highlight buttons above.',
-      'The minimap shows all highlights.',
-      'Enjoy your professional editor!',
+      'Open a log file',
     ],
-    highlights: [
-      { line: 2, type: 'info' },
-      { line: 3, type: 'warning' },
-      { line: 4, type: 'success' }
-    ]
+    highlights: []
   }
 ];
 
-const baseHighlightTypes = [
-  { type: 'info', label: 'Info', color: '#4F8EF7' },
-  { type: 'warning', label: 'Warning', color: '#F7B32B' },
-  { type: 'success', label: 'Success', color: '#4FCF7F' }
-];
+// Start with no predefined highlight groups; they are created dynamically (similarities or user selections)
+const baseHighlightTypes = [];
 
 function App() {
   const [selectedDocIdx, setSelectedDocIdx] = useState(0);
   const [highlightTypes, setHighlightTypes] = useState(baseHighlightTypes);
-  const [activeHighlights, setActiveHighlights] = useState(baseHighlightTypes.map(ht => ht.type));
+  const [activeHighlights, setActiveHighlights] = useState([]);
   const [docContent, setDocContent] = useState(exampleDocuments[0].content);
-  const [docHighlights, setDocHighlights] = useState(exampleDocuments[0].highlights);
+  const [docHighlights, setDocHighlights] = useState([]);
   const [groupCounter, setGroupCounter] = useState(1);
   const [theme, setTheme] = useState(() => (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   const [fontSize, setFontSize] = useState(14);
@@ -71,10 +59,10 @@ function App() {
   const handleDocumentSelect = (idx) => {
     setSelectedDocIdx(idx);
     // Reset to original document state when switching (custom groups not persisted across docs for now)
-    setDocContent(exampleDocuments[idx].content);
-    setDocHighlights(exampleDocuments[idx].highlights);
-    setHighlightTypes(baseHighlightTypes);
-    setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
+  setDocContent(exampleDocuments[idx].content);
+  setDocHighlights([]);
+  setHighlightTypes([]);
+  setActiveHighlights([]);
     setGroupCounter(1);
   };
 
@@ -245,8 +233,8 @@ function App() {
     setCurrentServerIndex(idx);
     setDocContent([`Loading ${entry.fileName} ...`]);
     setDocHighlights([]);
-    setHighlightTypes(baseHighlightTypes);
-    setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
+  setHighlightTypes([]);
+  setActiveHighlights([]);
     // Reset similarity mapping per new file
     simTypeMapRef.current = new Map();
     setFileMeta(null);
@@ -344,8 +332,9 @@ function App() {
   }, [fileMeta, userId, useVirtual]);
 
   const handleAnalyze = useCallback(async () => {
-    const targetFile = currentServerFile?.fileName || exampleDocuments[selectedDocIdx]?.name;
-    if (!targetFile) return;
+    // Only allow analysis when a server file is explicitly selected
+    if (!currentServerFile || !currentServerFile.fileName) return;
+    const targetFile = currentServerFile.fileName;
     if (analyzeStatus.running) return; // prevent duplicate starts
     setAnalyzeStatus({ running: true, progress: { message: 'Starting…', pct: 0 }, file: targetFile, error: null });
     try {
@@ -376,7 +365,7 @@ function App() {
     } catch (e) {
       setAnalyzeStatus({ running: false, progress: null, file: targetFile, error: 'Failed to start analysis' });
     }
-  }, [currentServerFile, selectedDocIdx, exampleDocuments, userId, analyzeStatus.running]);
+  }, [currentServerFile, userId, analyzeStatus.running]);
 
   // Provide a stable handler for virtualized line requests (moved out of JSX)
   const handleRequestLines = useCallback(async (start, end) => {
@@ -457,17 +446,17 @@ function App() {
             <button
               className={`analyse-btn ${analyzeStatus.running ? 'is-running' : ''} ${analyzeStatus.running && (!analyzeStatus.progress || analyzeStatus.progress.pct == null) ? 'indeterminate' : ''} ${analyzeStatus.running && analyzeStatus.progress?.pct != null ? 'determinate' : ''}`}
               onClick={handleAnalyze}
-              disabled={analyzeStatus.running}
+              disabled={analyzeStatus.running || !currentServerFile}
               aria-busy={analyzeStatus.running || undefined}
               aria-live="polite"
               aria-label={analyzeStatus.running
                 ? (analyzeStatus.progress?.pct != null
                     ? `Analysing ${analyzeStatus.progress.pct.toFixed(0)} percent - ${analyzeStatus.progress.message || ''}`
                     : `Analysing - ${analyzeStatus.progress?.message || 'in progress'}`)
-                : 'Analyse file'}
+                : (!currentServerFile ? 'Select a file to analyse' : 'Analyse file')}
             >
               <span className="btn-progress-label">
-                {analyzeStatus.running ? 'Analysing…' : 'Analyse'}
+                {analyzeStatus.running ? 'Analysing…' : (currentServerFile ? 'Analyse' : 'Analyse')}
               </span>
               {analyzeStatus.running && (
                 <span className="btn-progress-track" aria-hidden="true">
