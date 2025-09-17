@@ -157,7 +157,7 @@
   flex-wrap: wrap;
   flex: 1 1 auto;
   position: relative; /* allow absolute positioning of controls */
-  padding-right: 140px; /* reserve space so buttons don't flow under Edit Colors */
+  padding-right: 140px; /* reserve space so buttons don't flow under Highlight Settings */
   box-sizing: border-box;
 }
 .highlight-btn {
@@ -449,7 +449,46 @@
   outline-offset: 1px;
 }
 
-/* Edit Colors toggle button */
+/* New grid layout for color & threshold manager */
+.color-grid {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 70px 140px 90px 90px;
+  gap: 6px 12px;
+  width: 100%;
+  align-items: center;
+  margin-top: 4px;
+}
+.color-grid-head {
+  display: contents;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-soft);
+}
+.color-grid-head > span { padding: 2px 2px 4px 2px; }
+.color-grid-row { display: contents; }
+.color-grid-row > span { padding: 4px 2px; font-size: 0.7rem; }
+.color-grid-row .cg-label { font-weight: 500; }
+.color-grid-row input.color-input { width: 100%; min-width: 40px; padding: 0; height: 28px; }
+.color-grid-row input.color-text-input { width: 100%; }
+.color-grid-row input.threshold-input { width: 100%; text-align: right; }
+.color-grid-row .cg-actions { text-align: right; }
+.apply-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-soft);
+  font-size: 0.65rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.apply-btn:hover { background: color-mix(in srgb, var(--accent) 20%, var(--bg)); color: var(--accent); border-color: var(--accent); }
+.apply-btn:active { background: color-mix(in srgb, var(--accent) 30%, var(--bg)); }
+.apply-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; }
+
+/* Highlight Settings toggle button */
 .toggle-colors-btn {
   position: absolute;
   top: 0;

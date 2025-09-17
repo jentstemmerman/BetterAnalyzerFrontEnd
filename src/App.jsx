@@ -44,9 +44,12 @@ function App() {
   const nextLineRef = React.useRef(0);
   const isLoadingRef = React.useRef(false);
   const LINES_PER_CHUNK = 10000;
-  const SIMILARITY_THRESHOLD = -0.8;
+  // Default similarity threshold (used when a highlight group doesn't have its own)
+  const DEFAULT_SIMILARITY_THRESHOLD = -0.8;
   // Map similarity name -> highlight type key (stable per file)
   const simTypeMapRef = React.useRef(new Map());
+  // Store raw similarity score arrays per similarity group name (value: { type, scores: number[], totalLines })
+  const similarityScoresRef = React.useRef(new Map());
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -100,7 +103,7 @@ function App() {
       type = `${baseType}-${i++}`;
     }
     const color = randomPastel();
-    const newType = { type, label: name, color };
+  const newType = { type, label: name, color, threshold: DEFAULT_SIMILARITY_THRESHOLD, origin: 'manual' };
     setHighlightTypes(prev => [...prev, newType]);
     setActiveHighlights(prev => [...prev, type]);
     setDocHighlights(prev => {
@@ -130,6 +133,17 @@ function App() {
     }
     if (!/^#[0-9a-fA-F]{6}$/.test(c)) return; // ignore invalid
     setHighlightTypes(prev => prev.map(ht => ht.type === type ? { ...ht, color: c } : ht));
+  }, []);
+
+  // Update per-group similarity threshold; expects numeric value (more negative = stricter)
+  const updateHighlightThreshold = useCallback((type, value) => {
+    if (value === '' || value === null || value === undefined) return;
+    let num = Number(value);
+    if (Number.isNaN(num) || !Number.isFinite(num)) return;
+    // Clamp to a reasonable range for similarity scores
+    if (num > 1) num = 1;
+    if (num < -1) num = -1;
+    setHighlightTypes(prev => prev.map(ht => ht.type === type ? { ...ht, threshold: num } : ht));
   }, []);
 
   const highlights = docHighlights.filter(h => activeHighlights.includes(h.type));
@@ -162,7 +176,7 @@ function App() {
     let i = 1;
     while (used.has(slug)) slug = `${slugBase}-${i++}`;
     const color = randomPastel();
-    const newType = { type: slug, label: key, color };
+  const newType = { type: slug, label: key, color, threshold: DEFAULT_SIMILARITY_THRESHOLD, origin: 'similarity' };
     // Record mapping first to avoid races from concurrent chunk loads
     simTypeMapRef.current.set(key, slug);
     // Register new highlight type BUT do NOT auto-enable.
@@ -182,11 +196,27 @@ function App() {
       const arr = s.simularities ?? s.values ?? s.scores ?? s.array ?? s.floats;
       if (!Array.isArray(arr) || !arr.length) continue;
       const type = ensureSimilarityType(name);
+      // Determine threshold for this type (fallback to default)
+      const typeThreshold = (highlightTypes.find(h => h.type === type)?.threshold ?? DEFAULT_SIMILARITY_THRESHOLD);
+      // Persist full score array (only once) if it matches totalLines; else merge chunk region.
+      if (Number.isInteger(totalLines)) {
+        const entry = similarityScoresRef.current.get(type) || { type, scores: new Array(totalLines).fill(null), totalLines };
+        // Fill the region represented by this chunk.
+        for (let i = 0; i < length; i++) {
+          const idx = (Number.isInteger(totalLines) && arr.length === totalLines) ? (startIndex + i) : (startIndex + i);
+          // Guard index
+          if (idx >= 0 && idx < entry.scores.length) {
+            const val = arr[(arr.length === totalLines) ? idx : i];
+            if (typeof val === 'number' && entry.scores[idx] == null) entry.scores[idx] = val;
+          }
+        }
+        similarityScoresRef.current.set(type, entry);
+      }
       const useWholeFile = Number.isInteger(totalLines) && arr.length === totalLines;
       for (let i = 0; i < length; i++) {
         const idx = useWholeFile ? (startIndex + i) : i;
         const v = arr[idx];
-        if (typeof v === 'number' && v < SIMILARITY_THRESHOLD) {
+        if (typeof v === 'number' && v < typeThreshold) {
           pendingAdds.push({ line: startIndex + i, type });
         }
       }
@@ -198,7 +228,33 @@ function App() {
       const filtered = pendingAdds.filter(h => !have.has(`${h.line}:${h.type}`));
       return filtered.length ? [...prev, ...filtered] : prev;
     });
-  }, [ensureSimilarityType]);
+  }, [ensureSimilarityType, highlightTypes]);
+
+  // Retroactively recompute highlights for a given similarity type based on stored scores & current threshold
+  const recomputeSimilarityType = useCallback((type) => {
+    const ht = highlightTypes.find(h => h.type === type);
+    if (!ht) return;
+    const data = similarityScoresRef.current.get(type);
+    if (!data || !Array.isArray(data.scores) || !data.scores.length) return;
+    const threshold = typeof ht.threshold === 'number' ? ht.threshold : DEFAULT_SIMILARITY_THRESHOLD;
+    const additions = [];
+    for (let i = 0; i < data.scores.length; i++) {
+      const v = data.scores[i];
+      if (typeof v === 'number' && v < threshold) additions.push({ line: i, type });
+    }
+    setDocHighlights(prev => {
+      // Remove existing highlights for this type first, then add recomputed set
+      const filteredPrev = prev.filter(h => h.type !== type);
+      // De-duplicate additions for safety
+      const seen = new Set();
+      const dedup = [];
+      for (const a of additions) {
+        const key = a.line;
+        if (!seen.has(key)) { seen.add(key); dedup.push(a); }
+      }
+      return [...filteredPrev, ...dedup];
+    });
+  }, [highlightTypes]);
 
   const handleCreateGroupFromSelection = () => {
     const api = editorApiRef.current;
@@ -238,6 +294,7 @@ function App() {
   setActiveHighlights([]);
     // Reset similarity mapping per new file
     simTypeMapRef.current = new Map();
+    similarityScoresRef.current = new Map();
     setFileMeta(null);
     setNextLineToLoad(0);
     setUseVirtual(false);
@@ -493,27 +550,64 @@ function App() {
       {showColorManager && (
         <section className="color-manager-panel">
           <div className="color-manager-inner layout-row">
-            <h4>Highlight Colors</h4>
-            <ul>
+            <h4>Highlight Colors & Thresholds</h4>
+            <div className="color-grid" role="table" aria-label="Highlight groups">
+              <div className="color-grid-head" role="row">
+                <span role="columnheader">Group</span>
+                <span role="columnheader">Color</span>
+                <span role="columnheader">Hex</span>
+                <span role="columnheader">Threshold</span>
+                <span role="columnheader" style={{ textAlign: 'right' }}>Actions</span>
+              </div>
               {highlightTypes.map(ht => (
-                <li key={ht.type} className="color-row">
-                  <span className="color-label">{ht.label}</span>
-                  <input
-                    type="color"
-                    className="color-input"
-                    value={/^#[0-9a-fA-F]{6}$/.test(ht.color) ? ht.color : '#cccccc'}
-                    title={`Pick color for ${ht.label}`}
-                    onChange={(e) => updateHighlightColor(ht.type, e.target.value)}
-                  />
-                  <input
-                    className="color-text-input"
-                    value={ht.color}
-                    aria-label={`Color hex for ${ht.label}`}
-                    onChange={(e) => updateHighlightColor(ht.type, e.target.value)}
-                  />
-                </li>
+                <div key={ht.type} className="color-grid-row" role="row">
+                  <span className="cg-label" role="cell">{ht.label}</span>
+                  <span role="cell">
+                    <input
+                      type="color"
+                      className="color-input"
+                      value={/^#[0-9a-fA-F]{6}$/.test(ht.color) ? ht.color : '#cccccc'}
+                      title={`Pick color for ${ht.label}`}
+                      onChange={(e) => updateHighlightColor(ht.type, e.target.value)}
+                    />
+                  </span>
+                  <span role="cell">
+                    <input
+                      className="color-text-input"
+                      value={ht.color}
+                      aria-label={`Color hex for ${ht.label}`}
+                      onChange={(e) => updateHighlightColor(ht.type, e.target.value)}
+                    />
+                  </span>
+                  <span role="cell">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="-1"
+                      max="1"
+                      className="color-text-input threshold-input"
+                      value={typeof ht.threshold === 'number' ? ht.threshold : DEFAULT_SIMILARITY_THRESHOLD}
+                      aria-label={`Similarity threshold for ${ht.label}`}
+                      title="Similarity threshold (matches when value < threshold). Range -1 to 1."
+                      onChange={(e) => updateHighlightThreshold(ht.type, e.target.value)}
+                    />
+                  </span>
+                  <span role="cell" className="cg-actions">
+                    {ht.origin === 'similarity' && (
+                      <button
+                        type="button"
+                        className="apply-btn"
+                        onClick={() => recomputeSimilarityType(ht.type)}
+                        title="Recompute highlights for this similarity group using current threshold"
+                      >Apply↻</button>
+                    )}
+                  </span>
+                </div>
               ))}
-            </ul>
+            </div>
+            <p style={{ width: '100%', fontSize: '0.65rem', color: 'var(--text-soft)', marginTop: 8 }}>
+              Changing a threshold does not automatically re-filter existing highlights. Use Apply↻ per similarity group to recompute.
+            </p>
           </div>
         </section>
       )}

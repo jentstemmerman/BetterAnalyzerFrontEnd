@@ -42,8 +42,8 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreat
           className="toggle-colors-btn"
           aria-expanded={showColorManager}
           onClick={onToggleColors}
-          title="Show / hide highlight color editor"
-        >{showColorManager ? 'Hide Colors' : 'Edit Colors'}</button>
+          title="Show or hide highlight settings (colors & thresholds)"
+        >{showColorManager ? 'Hide Settings' : 'Highlight Settings'}</button>
       )}
     </div>
   );
