@@ -518,6 +518,7 @@ function App() {
       )}
     <main className="editor-main">
   <div className="layout-row" style={{ alignItems: 'stretch', gap: '3px' }}>
+          {/* Performance tuning: smaller virtualChunkSize lowers per-fetch payload -> smoother scroll at cost of more requests */}
           <Editor
             content={docContent}
             setContent={setDocContent}
@@ -528,8 +529,8 @@ function App() {
             onRegisterApi={(api) => { editorApiRef.current = api; }}
             virtualFileMeta={useVirtual && currentServerFile && fileMeta ? fileMeta : null}
             onRequestLines={useVirtual && currentServerFile && fileMeta ? handleRequestLines : null}
-            virtualChunkSize={10000 / 10}
-            virtualPreload={5000 / 10}
+            virtualChunkSize={10000}
+            virtualPreload={5000}
             virtualPlaceholderLines={useVirtual && fileMeta ? fileMeta.numberOfLines : null}
           />
           <MiniMap
