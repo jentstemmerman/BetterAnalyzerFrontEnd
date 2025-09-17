@@ -7,6 +7,11 @@
   flex-direction: column;
 }
 
+/* Reserve space used by Monaco vertical scrollbar so highlights don't paint underneath it */
+:root {
+  --editor-scrollbar-reserve: 14px; /* adjust if theme scrollbar width differs */
+}
+
 .app-header {
   display: flex;
   align-items: center;

@@ -222,6 +222,29 @@ function Editor({
         // Clean up on unmount
         editorRef.current.__virtualScrollDisposable = scrollDisposable;
       }
+      // Measure and set scrollbar width CSS variable for precise highlight exclusion
+      try {
+        const measureScrollbar = () => {
+          const scTest = document.createElement('div');
+          scTest.style.width = '100px';
+          scTest.style.height = '100px';
+          scTest.style.overflow = 'scroll';
+          scTest.style.position = 'absolute';
+          scTest.style.top = '-9999px';
+          document.body.appendChild(scTest);
+          const width = scTest.offsetWidth - scTest.clientWidth; // vertical scrollbar width
+          document.body.removeChild(scTest);
+          if (width > 0 && width < 60) {
+            document.documentElement.style.setProperty('--editor-scrollbar-reserve', width + 'px');
+          }
+        };
+        measureScrollbar();
+        // Recalculate on window resize (scrollbar metrics can change with OS settings / zoom)
+        window.addEventListener('resize', measureScrollbar, { passive: true });
+        editorRef.current.__sbMeasure = measureScrollbar;
+      } catch (e) {
+        console.warn('[scrollbar-measure] failed', e);
+      }
     } catch (e) {
       console.error('[handleEditorDidMount] error', e);
     }
@@ -320,10 +343,17 @@ function Editor({
       }
       return hex;
     };
+    // Build CSS so that highlight background does NOT extend underneath the vertical scrollbar.
+    // We reserve a fixed width on the right (default 14px, customizable via --editor-scrollbar-reserve)
+    // by drawing the color with a ::before pseudo element that stops before the scrollbar.
     const css = highlightTypes.map(ht => {
       const rgba = toRgba(ht.color);
-      return `.monaco-editor .highlight-line-${ht.type} { background: ${rgba} !important; }
-      .highlight-line-${ht.type} { background: ${rgba} !important; }`;
+      return `/* Highlight style for ${ht.type} (excluding scrollbar area) */
+      .monaco-editor .highlight-line-${ht.type} { position: relative; background: none !important; }
+      .monaco-editor .highlight-line-${ht.type}::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; right: var(--editor-scrollbar-reserve,14px); background: ${rgba} !important; pointer-events: none; }
+      /* Fallback outside monaco (if ever used) */
+      .highlight-line-${ht.type} { position: relative; background: none !important; }
+      .highlight-line-${ht.type}::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; right: 0; background: ${rgba} !important; pointer-events: none; }`;
     }).join('\n');
     styleEl.innerHTML = css;
     if (!existing) document.head.appendChild(styleEl);
