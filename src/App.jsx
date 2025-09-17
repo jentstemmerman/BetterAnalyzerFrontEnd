@@ -56,6 +56,9 @@ function App() {
   const nextLineRef = React.useRef(0);
   const isLoadingRef = React.useRef(false);
   const LINES_PER_CHUNK = 10000;
+  const SIMILARITY_THRESHOLD = -0.8;
+  // Map similarity name -> highlight type key (stable per file)
+  const simTypeMapRef = React.useRef(new Map());
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -159,6 +162,55 @@ function App() {
 
   const editorApiRef = React.useRef(null);
 
+  // Ensure a similarity group exists for a name and return its type key
+  const ensureSimilarityType = useCallback((name) => {
+    const key = (typeof name === 'string' && name.trim()) ? name.trim() : 'similarity';
+    const existing = simTypeMapRef.current.get(key);
+    if (existing) return existing;
+    // Generate a unique type slug against current highlightTypes
+    const slugBase = key.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'similarity';
+    const used = new Set(highlightTypes.map(h => h.type));
+    let slug = slugBase;
+    let i = 1;
+    while (used.has(slug)) slug = `${slugBase}-${i++}`;
+    const color = randomPastel();
+    const newType = { type: slug, label: key, color };
+    // Record mapping first to avoid races from concurrent chunk loads
+    simTypeMapRef.current.set(key, slug);
+    // Register new highlight type and enable it by default
+    setHighlightTypes(prev => [...prev, newType]);
+    setActiveHighlights(prev => (prev.includes(slug) ? prev : [...prev, slug]));
+    return slug;
+  }, [highlightTypes]);
+
+  // Process similarities for a fetched chunk and add matching highlights
+  const processSimilarityChunk = useCallback((simularities, startIndex, length, meta) => {
+    if (!Array.isArray(simularities) || !simularities.length || !Number.isInteger(startIndex) || length <= 0) return;
+    const totalLines = meta?.numberOfLines;
+    const pendingAdds = [];
+    for (const s of simularities) {
+      const name = s.name ?? s.simularity_file ?? 'similarity';
+      const arr = s.simularities ?? s.values ?? s.scores ?? s.array ?? s.floats;
+      if (!Array.isArray(arr) || !arr.length) continue;
+      const type = ensureSimilarityType(name);
+      const useWholeFile = Number.isInteger(totalLines) && arr.length === totalLines;
+      for (let i = 0; i < length; i++) {
+        const idx = useWholeFile ? (startIndex + i) : i;
+        const v = arr[idx];
+        if (typeof v === 'number' && v < SIMILARITY_THRESHOLD) {
+          pendingAdds.push({ line: startIndex + i, type });
+        }
+      }
+    }
+    if (!pendingAdds.length) return;
+    setDocHighlights(prev => {
+      if (!prev || !prev.length) return [...pendingAdds];
+      const have = new Set(prev.map(h => `${h.line}:${h.type}`));
+      const filtered = pendingAdds.filter(h => !have.has(`${h.line}:${h.type}`));
+      return filtered.length ? [...prev, ...filtered] : prev;
+    });
+  }, [ensureSimilarityType]);
+
   const handleCreateGroupFromSelection = () => {
     const api = editorApiRef.current;
     if (!api) return;
@@ -195,6 +247,8 @@ function App() {
     setDocHighlights([]);
     setHighlightTypes(baseHighlightTypes);
     setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
+    // Reset similarity mapping per new file
+    simTypeMapRef.current = new Map();
     setFileMeta(null);
     setNextLineToLoad(0);
     setUseVirtual(false);
@@ -257,6 +311,14 @@ function App() {
         nextLineRef.current = meta.numberOfLines;
         setNextLineToLoad(meta.numberOfLines);
         return;
+      }
+      // Apply similarity-based highlights for this chunk if provided
+      try {
+        if (res && Array.isArray(res.simularities)) {
+          processSimilarityChunk(res.simularities, start, newLines.length, meta);
+        }
+      } catch (e) {
+        console.warn('processSimilarityChunk failed (non-virtual)', e);
       }
       setDocContent(prev => (start === 0 ? newLines : [...prev, ...newLines]));
       const newStart = start + newLines.length;
@@ -335,13 +397,21 @@ function App() {
         console.log(`lines.pop`);
         lines.pop();
       }
+      // Process similarity highlights for this virtual chunk
+      try {
+        if (res && Array.isArray(res.simularities)) {
+          processSimilarityChunk(res.simularities, start, lines.length, fileMeta);
+        }
+      } catch (e) {
+        console.warn('processSimilarityChunk failed (virtual)', e);
+      }
       return lines;
     } 
     catch (e) {
       console.warn('onRequestLines failed', e);
       return [];
     }
-  }, [currentServerFile, fileMeta, userId]);
+  }, [currentServerFile, fileMeta, userId, processSimilarityChunk]);
 
   return (
     <div className="app-container">
