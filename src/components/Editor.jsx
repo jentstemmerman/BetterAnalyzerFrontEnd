@@ -68,7 +68,32 @@ function Editor({
 
     try {
       const lines = await onRequestLines(start, end);
-      if (myGeneration !== generationRef.current) return; // stale
+      // Previous logic aborted applying a chunk if the viewport generation advanced.
+      // That led to permanent blank regions if the user kept scrolling (chunk kept
+      // returning as stale and its placeholder blank lines remained). We now allow
+      // applying the data if the chunk is still relevant (intersects retained viewport
+      // window) – and even if not, we prefer to apply rather than leave blanks.
+      if (myGeneration !== generationRef.current) {
+        try {
+          const vp = lastViewportRef.current;
+          const chunkStart = start;
+            const chunkEnd = end - 1;
+          const stillWithinBuffered = (
+            chunkEnd >= (vp.start - virtualPreload) &&
+            chunkStart <= (vp.end + virtualPreload)
+          );
+          if (!stillWithinBuffered) {
+            // It's truly far away; we can skip applying to reduce unnecessary DOM work.
+            // Schedule a re-fetch if it becomes needed again.
+            // console.log('[virtual] skip applying stale distant chunk', { chunkIdx, myGeneration, currentGen: generationRef.current });
+            return;
+          }
+          // else fall through and apply anyway – prevents blank holes.
+          // console.log('[virtual] applying stale-but-relevant chunk', { chunkIdx, myGeneration, currentGen: generationRef.current });
+        } catch (e) {
+          // On any error in relevance calculation, proceed with applying to be safe.
+        }
+      }
       const expected = end - start;
       if (!Array.isArray(lines) || lines.length !== expected) {
         console.error('[virtual] chunk size mismatch – server bug', { chunkIdx, start, end, expected, got: Array.isArray(lines) ? lines.length : 'non-array' });
