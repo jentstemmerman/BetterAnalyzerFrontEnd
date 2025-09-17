@@ -165,9 +165,10 @@ function App() {
     const newType = { type: slug, label: key, color };
     // Record mapping first to avoid races from concurrent chunk loads
     simTypeMapRef.current.set(key, slug);
-    // Register new highlight type and enable it by default
+    // Register new highlight type BUT do NOT auto-enable.
+    // This change ensures that when a new file loads, all similarity-derived
+    // highlight groups start disabled by default until the user explicitly toggles them.
     setHighlightTypes(prev => [...prev, newType]);
-    setActiveHighlights(prev => (prev.includes(slug) ? prev : [...prev, slug]));
     return slug;
   }, [highlightTypes]);
 
