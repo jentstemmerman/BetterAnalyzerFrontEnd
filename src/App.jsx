@@ -583,13 +583,20 @@ function App() {
                     <input
                       type="number"
                       step="0.01"
-                      min="-1"
+                      min="0"
                       max="1"
                       className="color-text-input threshold-input"
-                      value={typeof ht.threshold === 'number' ? ht.threshold : DEFAULT_SIMILARITY_THRESHOLD}
-                      aria-label={`Similarity threshold for ${ht.label}`}
-                      title="Similarity threshold (matches when value < threshold). Range -1 to 1."
-                      onChange={(e) => updateHighlightThreshold(ht.type, e.target.value)}
+                      value={(() => { const t = typeof ht.threshold === 'number' ? ht.threshold : DEFAULT_SIMILARITY_THRESHOLD; return Math.abs(t); })()}
+                      aria-label={`Similarity threshold magnitude for ${ht.label}`}
+                      title="Similarity match threshold (positive magnitude). Actual match if score < -value. Range 0..1."
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === '' ) return; // ignore empty
+                        const mag = Math.max(0, Math.min(1, Number(raw)));
+                        if (!Number.isFinite(mag)) return;
+                        // store as negative value internally
+                        updateHighlightThreshold(ht.type, -mag);
+                      }}
                     />
                   </span>
                   <span role="cell" className="cg-actions">
@@ -606,7 +613,7 @@ function App() {
               ))}
             </div>
             <p style={{ width: '100%', fontSize: '0.65rem', color: 'var(--text-soft)', marginTop: 8 }}>
-              Changing a threshold does not automatically re-filter existing highlights. Use Apply↻ per similarity group to recompute.
+              Threshold now shown as a positive magnitude (0..1). Internally a score matches when raw similarity &lt; -magnitude. Changing a value does not auto re-filter; use Apply↻ to recompute.
             </p>
           </div>
         </section>
