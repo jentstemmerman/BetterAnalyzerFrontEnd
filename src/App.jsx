@@ -336,7 +336,7 @@ function App() {
         if (fileLoadIdRef.current !== loadId) return; // file changed, stop
         const len = Math.min(LINES_PER_CHUNK, total - start);
         try {
-          const res = await fetchFileLines(fileName, userId, start, total, len);
+          const res = await fetchFileLines(fileName, userId, start, total, len, { similaritiesOnly: true });
           if (res && Array.isArray(res.simularities)) {
             // Only process similarities; do not mutate content in virtual mode
             processSimilarityChunk(res.simularities, start, len, meta);

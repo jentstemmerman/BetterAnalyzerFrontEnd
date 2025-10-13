@@ -30,7 +30,8 @@ export function UploadLogFile(file, userId) {
   }
 }
 
-export const fetchFileLines = async (fileName, userId, startLine, fileSize, numberOfLines) => {
+export const fetchFileLines = async (fileName, userId, startLine, fileSize, numberOfLines, options = {}) => {
+  const { similaritiesOnly = false } = options || {};
   if (startLine >= fileSize) {
     console.error('position >= fileSize', startLine, fileSize);
     return { text: '', start: startLine, size: 0 };
@@ -38,23 +39,19 @@ export const fetchFileLines = async (fileName, userId, startLine, fileSize, numb
     const startTime = Date.now();
     try {
       const response = await axios.get(`${backendUrl}/api/file/getlines/${fileName}`, {
-        params: { start: startLine, size: numberOfLines, userId: userId },
+        params: { start: startLine, size: numberOfLines, userId: userId, similaritiesOnly: similaritiesOnly ? 1 : 0 },
       });
       const endTime = Date.now();
       //console.log(`fetchFileLines: getlines call took ${endTime - startTime} ms`);
       const { text, start, size, simularities } = response.data;
-      
-      
-      
-      let res = response.data;
-
-      const text2 = (res && res.text) ? res.text : '';
-      let lines = text2.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-
-      if (lines.length !== numberOfLines)
-        console.error(`onRequestLines failed got ${lines.length} instead of ${numberOfLines}`);
-
-
+      // When only similarities are requested, the server may omit text; skip text checks
+      if (!similaritiesOnly) {
+        let res = response.data;
+        const text2 = (res && res.text) ? res.text : '';
+        let lines = text2.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+        if (lines.length !== numberOfLines)
+          console.error(`onRequestLines failed got ${lines.length} instead of ${numberOfLines}`);
+      }
       return { text: text, start: start, size: size, simularities: simularities };
     } catch (error) {
       const endTime = Date.now();
