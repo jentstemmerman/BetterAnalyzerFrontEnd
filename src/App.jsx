@@ -50,6 +50,8 @@ function App() {
   const simTypeMapRef = React.useRef(new Map());
   // Store raw similarity score arrays per similarity group name (value: { type, scores: number[], totalLines })
   const similarityScoresRef = React.useRef(new Map());
+  // Track whether we've kicked off a background prefetch for similarity data (virtual mode)
+  const similarityPrefetchStartedRef = React.useRef(false);
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -295,6 +297,7 @@ function App() {
     // Reset similarity mapping per new file
     simTypeMapRef.current = new Map();
     similarityScoresRef.current = new Map();
+  similarityPrefetchStartedRef.current = false;
     setFileMeta(null);
     setNextLineToLoad(0);
     setUseVirtual(false);
@@ -323,6 +326,29 @@ function App() {
       setDocContent([`Error loading file ${entry.fileName}`]);
     }
   };
+
+  // Background prefetch of similarity data for remaining chunks (virtual mode)
+  const prefetchSimilarityForRemainingChunks = useCallback(async (fileName, meta, startAt, loadId) => {
+    try {
+      const total = meta?.numberOfLines ?? 0;
+      if (!total || startAt >= total) return;
+      for (let start = Math.max(0, startAt); start < total; start += LINES_PER_CHUNK) {
+        if (fileLoadIdRef.current !== loadId) return; // file changed, stop
+        const len = Math.min(LINES_PER_CHUNK, total - start);
+        try {
+          const res = await fetchFileLines(fileName, userId, start, total, len);
+          if (res && Array.isArray(res.simularities)) {
+            // Only process similarities; do not mutate content in virtual mode
+            processSimilarityChunk(res.simularities, start, len, meta);
+          }
+        } catch (e) {
+          console.warn('prefetchSimilarityForRemainingChunks failed at', start, e);
+        }
+      }
+    } finally {
+      // Allow re-trigger if file changes; otherwise keep as done
+    }
+  }, [LINES_PER_CHUNK, fetchFileLines, processSimilarityChunk, userId]);
 
   const loadMoreLines = useCallback(async (fileName, metaOverride = null, loadIdOverride = null) => {
     console.log('loadMoreLines called');
@@ -452,13 +478,25 @@ function App() {
       } catch (e) {
         console.warn('processSimilarityChunk failed (virtual)', e);
       }
+      // After the first viewport-driven chunk, prefetch the rest in the background to
+      // populate similarity highlights across the whole file for the minimap/view.
+      if (useVirtual && !similarityPrefetchStartedRef.current) {
+        similarityPrefetchStartedRef.current = true;
+        const snapshot = fileLoadIdRef.current;
+        // Start prefetch from the end of the current request to avoid immediate duplication
+        setTimeout(() => {
+          if (snapshot === fileLoadIdRef.current && currentServerFile && fileMeta) {
+            prefetchSimilarityForRemainingChunks(currentServerFile.fileName, fileMeta, end, snapshot);
+          }
+        }, 0);
+      }
       return lines;
     } 
     catch (e) {
       console.warn('onRequestLines failed', e);
       return [];
     }
-  }, [currentServerFile, fileMeta, userId, processSimilarityChunk]);
+  }, [currentServerFile, fileMeta, userId, processSimilarityChunk, prefetchSimilarityForRemainingChunks, useVirtual]);
 
   return (
     <div className="app-container">
