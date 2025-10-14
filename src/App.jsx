@@ -4,7 +4,7 @@ import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
 import HighlightSelector from './components/HighlightSelector';
 import DocumentSelector from './components/DocumentSelector';
-import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile } from './api/library';
+import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile, CreateSignatureOnServer } from './api/library';
 
 const exampleDocuments = [
   {
@@ -261,15 +261,47 @@ function App() {
   const handleCreateGroupFromSelection = () => {
     const api = editorApiRef.current;
     if (!api) return;
-    const lines = api.getSelectedLines();
+    const lines = api.getSelectedLines(); // Expect array of line numbers (0-based)
     if (!lines.length) {
       alert('Select one or more lines in the editor first.');
       return;
     }
-    const name = window.prompt('Name for highlight group', `Group ${groupCounter}`);
-    if (name !== null) {
-      addHighlightGroup(name.trim() || `Group ${groupCounter}`, lines);
-      setGroupCounter(c => c + 1);
+    const name = window.prompt('Name for highlight group (will also create a server signature)', `Group ${groupCounter}`);
+    if (name === null) return; // user cancelled
+    const trimmedName = name.trim() || `Group ${groupCounter}`;
+    // Add highlight group locally first for immediate feedback
+    addHighlightGroup(trimmedName, lines);
+    setGroupCounter(c => c + 1);
+
+    // Prepare data for server signature creation
+    // We'll gather the actual line text so server has context. Fallback to just numbers if text unavailable.
+    let selectedLineObjects = [];
+    try {
+      if (typeof api.getLineText === 'function') {
+        selectedLineObjects = lines.map(ln => ({ line: ln, text: api.getLineText(ln) }));
+      } else if (Array.isArray(docContent) && docContent.length) {
+        selectedLineObjects = lines.map(ln => ({ line: ln, text: docContent[ln] || '' }));
+      } else {
+        selectedLineObjects = lines.map(ln => ({ line: ln }));
+      }
+    } catch (e) {
+      selectedLineObjects = lines.map(ln => ({ line: ln }));
+    }
+
+    // Only attempt if a server file is currently loaded
+    if (currentServerFile && currentServerFile.fileName) {
+      CreateSignatureOnServer(
+        trimmedName,
+        currentServerFile.fileName,
+        currentServerFile.filePath || '',
+        userId,
+        selectedLineObjects,
+        (createdName) => {
+          console.log('Server signature created:', createdName);
+        }
+      );
+    } else {
+      console.warn('No current server file loaded; skipping server signature creation.');
     }
   };
 

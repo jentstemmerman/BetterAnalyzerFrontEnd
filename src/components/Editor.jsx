@@ -429,10 +429,24 @@ function Editor({
     }
   }, [monaco]);
 
-  // Expose lightweight API to parent (selection helpers)
+  const getLineText = useCallback((zeroBasedLine) => {
+    const ed = editorRef.current;
+    if (!ed || typeof zeroBasedLine !== 'number') return '';
+    try {
+      const model = ed.getModel();
+      if (!model) return '';
+      const total = model.getLineCount();
+      if (zeroBasedLine < 0 || zeroBasedLine >= total) return '';
+      return model.getLineContent(zeroBasedLine + 1);
+    } catch {
+      return '';
+    }
+  }, []);
+
+  // Expose lightweight API to parent (selection helpers + line text)
   useEffect(() => {
-    if (onRegisterApi) onRegisterApi({ getSelectedLines, setCursorToLine });
-  }, [onRegisterApi, getSelectedLines, setCursorToLine]);
+    if (onRegisterApi) onRegisterApi({ getSelectedLines, setCursorToLine, getLineText });
+  }, [onRegisterApi, getSelectedLines, setCursorToLine, getLineText]);
 
   // Log readiness once
   useEffect(() => {
