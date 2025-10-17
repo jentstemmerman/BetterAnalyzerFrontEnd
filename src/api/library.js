@@ -180,7 +180,7 @@ export const GetServerSignatureData = async (userId) => {
   }
 };
 
-export function CreateSignatureOnServer(signature_name, logFileName, path, userId, selectedTextForSignaturee, callback) {
+export function CreateSignatureOnServer(signature_name, logFileName, path, userId, selectedTextForSignature, callback) {
   if (signature_name && logFileName) {
     const formData = new FormData();
     console.log('CreateSignatureOnServer signature_name ', signature_name);
@@ -189,7 +189,7 @@ export function CreateSignatureOnServer(signature_name, logFileName, path, userI
     formData.append('modelDirectory', 'model');
     formData.append('path', path);
     formData.append('logFileName', logFileName);
-    formData.append('selectedTextForSignaturee', JSON.stringify(selectedTextForSignaturee));
+    formData.append('selectedTextForSignature', JSON.stringify(selectedTextForSignature));
 
     fetch(`${backendUrl}/api/createSignatureFile`, {
       method: 'POST',
