@@ -195,8 +195,13 @@ function App() {
     const pendingAdds = [];
     for (const s of simularities) {
       const name = s.name ?? s.simularity_file ?? 'similarity';
-      const arr = s.simularities ?? s.values ?? s.scores ?? s.array ?? s.floats;
-      if (!Array.isArray(arr) || !arr.length) continue;
+      let arr = s.simularities ?? s.values ?? s.scores ?? s.array ?? s.floats;
+      if (!arr || (!Array.isArray(arr) && !(arr && typeof arr.length === 'number'))) continue;
+      // Convert TypedArray to plain numbers if necessary
+      if (arr && typeof arr.length === 'number' && !Array.isArray(arr)) {
+        try { arr = Array.from(arr); } catch { continue; }
+      }
+      if (!arr.length) continue;
       const type = ensureSimilarityType(name);
       // Determine threshold for this type (fallback to default)
       const typeThreshold = (highlightTypes.find(h => h.type === type)?.threshold ?? DEFAULT_SIMILARITY_THRESHOLD);
