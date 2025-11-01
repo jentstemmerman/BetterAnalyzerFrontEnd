@@ -7,6 +7,11 @@
   flex-direction: column;
 }
 
+/* Reserve space used by Monaco vertical scrollbar so highlights don't paint underneath it */
+:root {
+  --editor-scrollbar-reserve: 14px; /* adjust if theme scrollbar width differs */
+}
+
 .app-header {
   display: flex;
   align-items: center;
@@ -19,12 +24,18 @@
 /* Shared horizontal alignment container */
 .layout-row {
   width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
+  /* Removed max-width so rows can expand with viewport */
   display: flex;
   align-items: center;
   gap: 16px;
   box-sizing: border-box;
+  margin: 0; /* flush; parent padding controls breathing room */
+}
+
+/* Optional constrained variant if needed elsewhere */
+.layout-row--centered {
+  max-width: 1400px;
+  margin: 0 auto;
 }
 
 .highlight-selector-wrapper {
@@ -61,13 +72,92 @@
   background: var(--accent-hover);
 }
 
+/* Analyse button progress embedding */
+.analyse-btn {
+  position: relative;
+  overflow: hidden; /* contain wipe layer */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 130px;
+  line-height: 1.1;
+  isolation: isolate; /* ensure blend effects stay inside */
+}
+.analyse-btn.is-running {
+  cursor: progress;
+}
+.analyse-btn .btn-progress-label {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  max-width: 100%;
+}
+/* Full-surface wipe layer */
+.analyse-btn .btn-progress-track {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: none;
+  z-index: 1;
+  pointer-events: none;
+}
+.analyse-btn .btn-progress-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 70%, #ffffff) 0%, var(--accent-hover) 40%, var(--accent) 100%);
+  mix-blend-mode: plus-lighter; /* subtle brightness effect over base */
+  opacity: 0.85;
+  transition: width 0.45s cubic-bezier(.4,.0,.2,1);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bg-alt) 55%, transparent), 0 0 6px -1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.analyse-btn.is-running .btn-progress-fill { width: 8%; } /* initial tiny sliver */
+.analyse-btn.is-running.determinate .btn-progress-fill {
+  /* Determinate mode: width set inline via style attribute; we add a subtle transition emphasis */
+  transition: width 0.45s cubic-bezier(.4,.0,.2,1), opacity 0.3s ease;
+  opacity: 0.9;
+}
+/* Indeterminate animation when pct unknown */
+@keyframes analyse-indeterminate {
+  0% { transform: translateX(-50%) scaleX(0.4); }
+  50% { transform: translateX(25%) scaleX(0.9); }
+  100% { transform: translateX(120%) scaleX(0.4); }
+}
+@keyframes analyse-wipe-indeterminate {
+  0% { transform: translateX(-60%) skewX(-6deg); width: 35%; }
+  40% { transform: translateX(10%) skewX(-6deg); width: 55%; }
+  70% { transform: translateX(55%) skewX(-6deg); width: 45%; }
+  100% { transform: translateX(130%) skewX(-6deg); width: 35%; }
+}
+.analyse-btn.is-running.indeterminate .btn-progress-fill {
+  width: 45%;
+  animation: analyse-wipe-indeterminate 1.4s ease-in-out infinite;
+  background: linear-gradient(120deg, var(--accent-hover) 0%, var(--accent) 55%, #ffffff 140%);
+  mix-blend-mode: normal;
+  opacity: 0.75;
+}
+.analyse-btn:disabled {
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+/* Ensure label stays above wipe */
+.analyse-btn .btn-progress-label { position: relative; z-index: 2; }
+
 .highlight-selector {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
   flex: 1 1 auto;
   position: relative; /* allow absolute positioning of controls */
-  padding-right: 140px; /* reserve space so buttons don't flow under Edit Colors */
+  padding-right: 140px; /* reserve space so buttons don't flow under Highlight Settings */
   box-sizing: border-box;
 }
 .highlight-btn {
@@ -359,7 +449,46 @@
   outline-offset: 1px;
 }
 
-/* Edit Colors toggle button */
+/* New grid layout for color & threshold manager */
+.color-grid {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 70px 140px 90px 90px;
+  gap: 6px 12px;
+  width: 100%;
+  align-items: center;
+  margin-top: 4px;
+}
+.color-grid-head {
+  display: contents;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-soft);
+}
+.color-grid-head > span { padding: 2px 2px 4px 2px; }
+.color-grid-row { display: contents; }
+.color-grid-row > span { padding: 4px 2px; font-size: 0.7rem; }
+.color-grid-row .cg-label { font-weight: 500; }
+.color-grid-row input.color-input { width: 100%; min-width: 40px; padding: 0; height: 28px; }
+.color-grid-row input.color-text-input { width: 100%; }
+.color-grid-row input.threshold-input { width: 100%; text-align: right; }
+.color-grid-row .cg-actions { text-align: right; }
+.apply-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-soft);
+  font-size: 0.65rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.apply-btn:hover { background: color-mix(in srgb, var(--accent) 20%, var(--bg)); color: var(--accent); border-color: var(--accent); }
+.apply-btn:active { background: color-mix(in srgb, var(--accent) 30%, var(--bg)); }
+.apply-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; }
+
+/* Highlight Settings toggle button */
 .toggle-colors-btn {
   position: absolute;
   top: 0;
@@ -393,3 +522,14 @@
   background: var(--accent-hover);
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--bg-alt) 55%, transparent);
 }
+
+/* Allow the main editor region to grow full width beyond the generic 1400px cap */
+.editor-main > .layout-row {
+  max-width: none;
+}
+
+/* Header and highlight bar should also span full width */
+/* overrides no longer necessary after global removal; kept if legacy HTML adds nested rows */
+.app-header > .layout-row,
+.highlight-selector-wrapper > .layout-row { max-width: 100%; }
+

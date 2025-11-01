@@ -5,7 +5,10 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreat
     <div className="highlight-selector">
       {highlightTypes.map(ht => {
         const isActive = active.includes(ht.type);
-  const removable = true;
+        const removable = true;
+        const displayLabel = (ht.label || '')
+          .replace(/^Simularities_/i, '')
+          .replace(/\.dat$/i, '');
         return (
           <button
             key={ht.type}
@@ -14,7 +17,7 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreat
             onClick={() => onToggle(ht.type)}
             title={ht.label + (removable ? ' (toggle / delete)' : '')}
           >
-            <span className="highlight-label">{ht.label}</span>
+            <span className="highlight-label">{displayLabel}</span>
             {removable && (
               <span
                 className="remove-highlight-icon"
@@ -42,8 +45,8 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreat
           className="toggle-colors-btn"
           aria-expanded={showColorManager}
           onClick={onToggleColors}
-          title="Show / hide highlight color editor"
-        >{showColorManager ? 'Hide Colors' : 'Edit Colors'}</button>
+          title="Show or hide highlight settings (colors & thresholds)"
+        >{showColorManager ? 'Hide Settings' : 'Highlight Settings'}</button>
       )}
     </div>
   );

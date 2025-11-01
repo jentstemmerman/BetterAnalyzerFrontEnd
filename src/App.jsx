@@ -4,42 +4,30 @@ import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
 import HighlightSelector from './components/HighlightSelector';
 import DocumentSelector from './components/DocumentSelector';
-import { GetServerDirectoryListing, getMetadata, fetchFileLines } from './api/library';
+import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile, CreateSignatureOnServer } from './api/library';
 
 const exampleDocuments = [
   {
-    name: 'Sample Document',
+    name: 'Empty Document',
     content: [
-      'This is a sample document.',
-      'You can edit this text.',
-      'Some lines are highlighted.',
-      'Try toggling highlight buttons above.',
-      'The minimap shows all highlights.',
-      'Enjoy your professional editor!',
+      'Open a log file',
     ],
-    highlights: [
-      { line: 2, type: 'info' },
-      { line: 3, type: 'warning' },
-      { line: 4, type: 'success' }
-    ]
+    highlights: []
   }
 ];
 
-const baseHighlightTypes = [
-  { type: 'info', label: 'Info', color: '#4F8EF7' },
-  { type: 'warning', label: 'Warning', color: '#F7B32B' },
-  { type: 'success', label: 'Success', color: '#4FCF7F' }
-];
+// Start with no predefined highlight groups; they are created dynamically (similarities or user selections)
+const baseHighlightTypes = [];
 
 function App() {
   const [selectedDocIdx, setSelectedDocIdx] = useState(0);
   const [highlightTypes, setHighlightTypes] = useState(baseHighlightTypes);
-  const [activeHighlights, setActiveHighlights] = useState(baseHighlightTypes.map(ht => ht.type));
+  const [activeHighlights, setActiveHighlights] = useState([]);
   const [docContent, setDocContent] = useState(exampleDocuments[0].content);
-  const [docHighlights, setDocHighlights] = useState(exampleDocuments[0].highlights);
+  const [docHighlights, setDocHighlights] = useState([]);
   const [groupCounter, setGroupCounter] = useState(1);
   const [theme, setTheme] = useState(() => (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-  const [fontSize, setFontSize] = useState(16);
+  const [fontSize, setFontSize] = useState(14);
   const [showColorManager, setShowColorManager] = useState(false);
   const [minimapWidth, setMinimapWidth] = useState(15);
   const [serverEntries, setServerEntries] = useState([]); // array of {fileName,filePath,isDirectory}
@@ -48,27 +36,22 @@ function App() {
   const [currentServerFile, setCurrentServerFile] = useState(null); // entry object
   const [currentServerIndex, setCurrentServerIndex] = useState(-1);
   const [fileMeta, setFileMeta] = useState(null); // { size, numberOfLines }
-  // Large file streaming + virtual window state
-  const [nextLineToLoad, setNextLineToLoad] = useState(0); // global next line index to request (exclusive)
+  const [nextLineToLoad, setNextLineToLoad] = useState(0);
   const [isLoadingLines, setIsLoadingLines] = useState(false);
-  const fileLoadIdRef = React.useRef(0); // increments each file selection to invalidate pending loads
-  const nextLineRef = React.useRef(0); // mirrors nextLineToLoad in ref form for async usage
+  const [useVirtual, setUseVirtual] = useState(false); // enable monaco viewport-driven loading
+  const [analyzeStatus, setAnalyzeStatus] = useState({ running: false, progress: null, file: null, error: null });
+  const fileLoadIdRef = React.useRef(0);
+  const nextLineRef = React.useRef(0);
   const isLoadingRef = React.useRef(false);
-  const windowStartRef = React.useRef(0); // global starting line index represented by docContent[0]
-  const [windowStart, setWindowStart] = useState(0); // mirrored state for render (lineNumberOffset)
-  const lastViewportRef = React.useRef({ first: -1, last: -1 });
-  const lastGlobalLastRef = React.useRef(-1); // track previous globalLast to detect real user scroll
-  const lastPrefetchTsRef = React.useRef(0); // throttle generic distance-based prefetch
-  const lastAdvanceTsRef = React.useRef(Date.now()); // when nextLineRef last advanced
-  const retryMapRef = React.useRef({}); // { startLine: { attempts, nextDelayMs } }
-  const [fetchError, setFetchError] = useState(null); // { message, atLine }
-  const LINES_PER_CHUNK = 800; // fetch size from server
-  const MAX_BUFFER_LINES = 20000; // keep at most this many lines resident to avoid OOM
-  const TARGET_BACK_BUFFER = 2000; // preferred number of previously viewed lines to retain behind viewport
-  const BOTTOM_PREFETCH_MARGIN = 600; // when viewport close to bottom loaded region, fetch more
-  const TOP_PREFETCH_MARGIN = 600; // (future) allow backward paging when scrolled near top & trimmed
-  const ENABLE_BACKWARD_FETCH = false; // set true if we implement reverse fetch later
-  const PREFETCH_AHEAD = 800; // trigger another fetch when fewer than this many lines remain ahead of viewport
+  const LINES_PER_CHUNK = 10000;
+  // Default similarity threshold (used when a highlight group doesn't have its own)
+  const DEFAULT_SIMILARITY_THRESHOLD = -0.8;
+  // Map similarity name -> highlight type key (stable per file)
+  const simTypeMapRef = React.useRef(new Map());
+  // Store raw similarity score arrays per similarity group name (value: { type, scores: number[], totalLines })
+  const similarityScoresRef = React.useRef(new Map());
+  // Track whether we've kicked off a background prefetch for similarity data (virtual mode)
+  const similarityPrefetchStartedRef = React.useRef(false);
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -81,10 +64,10 @@ function App() {
   const handleDocumentSelect = (idx) => {
     setSelectedDocIdx(idx);
     // Reset to original document state when switching (custom groups not persisted across docs for now)
-    setDocContent(exampleDocuments[idx].content);
-    setDocHighlights(exampleDocuments[idx].highlights);
-    setHighlightTypes(baseHighlightTypes);
-    setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
+  setDocContent(exampleDocuments[idx].content);
+  setDocHighlights([]);
+  setHighlightTypes([]);
+  setActiveHighlights([]);
     setGroupCounter(1);
   };
 
@@ -122,7 +105,7 @@ function App() {
       type = `${baseType}-${i++}`;
     }
     const color = randomPastel();
-    const newType = { type, label: name, color };
+  const newType = { type, label: name, color, threshold: DEFAULT_SIMILARITY_THRESHOLD, origin: 'manual' };
     setHighlightTypes(prev => [...prev, newType]);
     setActiveHighlights(prev => [...prev, type]);
     setDocHighlights(prev => {
@@ -154,6 +137,17 @@ function App() {
     setHighlightTypes(prev => prev.map(ht => ht.type === type ? { ...ht, color: c } : ht));
   }, []);
 
+  // Update per-group similarity threshold; expects numeric value (more negative = stricter)
+  const updateHighlightThreshold = useCallback((type, value) => {
+    if (value === '' || value === null || value === undefined) return;
+    let num = Number(value);
+    if (Number.isNaN(num) || !Number.isFinite(num)) return;
+    // Clamp to a reasonable range for similarity scores
+    if (num > 1) num = 1;
+    if (num < -1) num = -1;
+    setHighlightTypes(prev => prev.map(ht => ht.type === type ? { ...ht, threshold: num } : ht));
+  }, []);
+
   const highlights = docHighlights.filter(h => activeHighlights.includes(h.type));
 
   // Apply theme attribute & persist
@@ -172,18 +166,147 @@ function App() {
 
   const editorApiRef = React.useRef(null);
 
+  // Ensure a similarity group exists for a name and return its type key
+  const ensureSimilarityType = useCallback((name) => {
+    const key = (typeof name === 'string' && name.trim()) ? name.trim() : 'similarity';
+    const existing = simTypeMapRef.current.get(key);
+    if (existing) return existing;
+    // Generate a unique type slug against current highlightTypes
+    const slugBase = key.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'similarity';
+    const used = new Set(highlightTypes.map(h => h.type));
+    let slug = slugBase;
+    let i = 1;
+    while (used.has(slug)) slug = `${slugBase}-${i++}`;
+    const color = randomPastel();
+  const newType = { type: slug, label: key, color, threshold: DEFAULT_SIMILARITY_THRESHOLD, origin: 'similarity' };
+    // Record mapping first to avoid races from concurrent chunk loads
+    simTypeMapRef.current.set(key, slug);
+    // Register new highlight type BUT do NOT auto-enable.
+    // This change ensures that when a new file loads, all similarity-derived
+    // highlight groups start disabled by default until the user explicitly toggles them.
+    setHighlightTypes(prev => [...prev, newType]);
+    return slug;
+  }, [highlightTypes]);
+
+  // Process similarities for a fetched chunk and add matching highlights
+  const processSimilarityChunk = useCallback((simularities, startIndex, length, meta) => {
+    if (!Array.isArray(simularities) || !simularities.length || !Number.isInteger(startIndex) || length <= 0) return;
+    const totalLines = meta?.numberOfLines;
+    const pendingAdds = [];
+    for (const s of simularities) {
+      const name = s.name ?? s.simularity_file ?? 'similarity';
+      let arr = s.simularities ?? s.values ?? s.scores ?? s.array ?? s.floats;
+      if (!arr || (!Array.isArray(arr) && !(arr && typeof arr.length === 'number'))) continue;
+      // Convert TypedArray to plain numbers if necessary
+      if (arr && typeof arr.length === 'number' && !Array.isArray(arr)) {
+        try { arr = Array.from(arr); } catch { continue; }
+      }
+      if (!arr.length) continue;
+      const type = ensureSimilarityType(name);
+      // Determine threshold for this type (fallback to default)
+      const typeThreshold = (highlightTypes.find(h => h.type === type)?.threshold ?? DEFAULT_SIMILARITY_THRESHOLD);
+      // Persist full score array (only once) if it matches totalLines; else merge chunk region.
+      if (Number.isInteger(totalLines)) {
+        const entry = similarityScoresRef.current.get(type) || { type, scores: new Array(totalLines).fill(null), totalLines };
+        // Fill the region represented by this chunk.
+        for (let i = 0; i < length; i++) {
+          const idx = (Number.isInteger(totalLines) && arr.length === totalLines) ? (startIndex + i) : (startIndex + i);
+          // Guard index
+          if (idx >= 0 && idx < entry.scores.length) {
+            const val = arr[(arr.length === totalLines) ? idx : i];
+            if (typeof val === 'number' && entry.scores[idx] == null) entry.scores[idx] = val;
+          }
+        }
+        similarityScoresRef.current.set(type, entry);
+      }
+      const useWholeFile = Number.isInteger(totalLines) && arr.length === totalLines;
+      for (let i = 0; i < length; i++) {
+        const idx = useWholeFile ? (startIndex + i) : i;
+        const v = arr[idx];
+        if (typeof v === 'number' && v < typeThreshold) {
+          pendingAdds.push({ line: startIndex + i, type });
+        }
+      }
+    }
+    if (!pendingAdds.length) return;
+    setDocHighlights(prev => {
+      if (!prev || !prev.length) return [...pendingAdds];
+      const have = new Set(prev.map(h => `${h.line}:${h.type}`));
+      const filtered = pendingAdds.filter(h => !have.has(`${h.line}:${h.type}`));
+      return filtered.length ? [...prev, ...filtered] : prev;
+    });
+  }, [ensureSimilarityType, highlightTypes]);
+
+  // Retroactively recompute highlights for a given similarity type based on stored scores & current threshold
+  const recomputeSimilarityType = useCallback((type) => {
+    const ht = highlightTypes.find(h => h.type === type);
+    if (!ht) return;
+    const data = similarityScoresRef.current.get(type);
+    if (!data || !Array.isArray(data.scores) || !data.scores.length) return;
+    const threshold = typeof ht.threshold === 'number' ? ht.threshold : DEFAULT_SIMILARITY_THRESHOLD;
+    const additions = [];
+    for (let i = 0; i < data.scores.length; i++) {
+      const v = data.scores[i];
+      if (typeof v === 'number' && v < threshold) additions.push({ line: i, type });
+    }
+    setDocHighlights(prev => {
+      // Remove existing highlights for this type first, then add recomputed set
+      const filteredPrev = prev.filter(h => h.type !== type);
+      // De-duplicate additions for safety
+      const seen = new Set();
+      const dedup = [];
+      for (const a of additions) {
+        const key = a.line;
+        if (!seen.has(key)) { seen.add(key); dedup.push(a); }
+      }
+      return [...filteredPrev, ...dedup];
+    });
+  }, [highlightTypes]);
+
   const handleCreateGroupFromSelection = () => {
     const api = editorApiRef.current;
     if (!api) return;
-    const lines = api.getSelectedLines();
+    const lines = api.getSelectedLines(); // Expect array of line numbers (0-based)
     if (!lines.length) {
       alert('Select one or more lines in the editor first.');
       return;
     }
-    const name = window.prompt('Name for highlight group', `Group ${groupCounter}`);
-    if (name !== null) {
-      addHighlightGroup(name.trim() || `Group ${groupCounter}`, lines);
-      setGroupCounter(c => c + 1);
+    const name = window.prompt('Name for highlight group (will also create a server signature)', `Group ${groupCounter}`);
+    if (name === null) return; // user cancelled
+    const trimmedName = name.trim() || `Group ${groupCounter}`;
+    // Add highlight group locally first for immediate feedback
+    addHighlightGroup(trimmedName, lines);
+    setGroupCounter(c => c + 1);
+
+    // Prepare data for server signature creation
+    // We'll gather the actual line text so server has context. Fallback to just numbers if text unavailable.
+    let selectedLineObjects = [];
+    try {
+      if (typeof api.getLineText === 'function') {
+        selectedLineObjects = lines.map(ln => ({ line: ln, text: api.getLineText(ln) }));
+      } else if (Array.isArray(docContent) && docContent.length) {
+        selectedLineObjects = lines.map(ln => ({ line: ln, text: docContent[ln] || '' }));
+      } else {
+        selectedLineObjects = lines.map(ln => ({ line: ln }));
+      }
+    } catch (e) {
+      selectedLineObjects = lines.map(ln => ({ line: ln }));
+    }
+
+    // Only attempt if a server file is currently loaded
+    if (currentServerFile && currentServerFile.fileName) {
+      CreateSignatureOnServer(
+        trimmedName,
+        currentServerFile.fileName,
+        currentServerFile.filePath || '',
+        userId,
+        selectedLineObjects,
+        (createdName) => {
+          console.log('Server signature created:', createdName);
+        }
+      );
+    } else {
+      console.warn('No current server file loaded; skipping server signature creation.');
     }
   };
 
@@ -206,13 +329,16 @@ function App() {
     setCurrentServerIndex(idx);
     setDocContent([`Loading ${entry.fileName} ...`]);
     setDocHighlights([]);
-    setHighlightTypes(baseHighlightTypes);
-    setActiveHighlights(baseHighlightTypes.map(ht => ht.type));
+  setHighlightTypes([]);
+  setActiveHighlights([]);
+    // Reset similarity mapping per new file
+    simTypeMapRef.current = new Map();
+    similarityScoresRef.current = new Map();
+  similarityPrefetchStartedRef.current = false;
     setFileMeta(null);
     setNextLineToLoad(0);
+    setUseVirtual(false);
     nextLineRef.current = 0;
-    windowStartRef.current = 0;
-    setWindowStart(0);
     fileLoadIdRef.current += 1; // invalidate previous loads
     const loadIdSnapshot = fileLoadIdRef.current;
     // Fetch metadata then first chunk
@@ -222,217 +348,192 @@ function App() {
         setDocContent([`Failed to load metadata for ${entry.fileName}`]);
         return;
       }
-      if (fileLoadIdRef.current !== loadIdSnapshot) return; // selection changed
+  if (fileLoadIdRef.current !== loadIdSnapshot) return; // selection changed
       setFileMeta(meta);
-      await loadMoreLines(entry.fileName, meta, loadIdSnapshot);
-      // Adaptive bootstrap: keep fetching until we have enough lines to scroll beyond viewport
-      setTimeout(() => adaptiveBootstrap(meta, entry.fileName), 20);
+      // Decide virtualization: enable if file larger than one chunk (or always true if desired)
+      const shouldVirtualize = meta.numberOfLines > LINES_PER_CHUNK; // heuristic
+      setUseVirtual(shouldVirtualize);
+      if (shouldVirtualize) {
+        // In virtual mode don't eagerly load lines; editor will fetch on demand
+        setDocContent([]); // keep empty; virtual model supplies blank lines
+      } else {
+        await loadMoreLines(entry.fileName, meta, loadIdSnapshot);
+      }
     } catch (e) {
       setDocContent([`Error loading file ${entry.fileName}`]);
     }
   };
 
+  // Background prefetch of similarity data for remaining chunks (virtual mode)
+  const prefetchSimilarityForRemainingChunks = useCallback(async (fileName, meta, startAt, loadId) => {
+    try {
+      const total = meta?.numberOfLines ?? 0;
+      if (!total || startAt >= total) return;
+      for (let start = Math.max(0, startAt); start < total; start += LINES_PER_CHUNK) {
+        if (fileLoadIdRef.current !== loadId) return; // file changed, stop
+        const len = Math.min(LINES_PER_CHUNK, total - start);
+        try {
+          const res = await fetchFileLines(fileName, userId, start, total, len, { similaritiesOnly: true });
+          if (res && Array.isArray(res.simularities)) {
+            // Only process similarities; do not mutate content in virtual mode
+            processSimilarityChunk(res.simularities, start, len, meta);
+          }
+        } catch (e) {
+          console.warn('prefetchSimilarityForRemainingChunks failed at', start, e);
+        }
+      }
+    } finally {
+      // Allow re-trigger if file changes; otherwise keep as done
+    }
+  }, [LINES_PER_CHUNK, fetchFileLines, processSimilarityChunk, userId]);
+
   const loadMoreLines = useCallback(async (fileName, metaOverride = null, loadIdOverride = null) => {
-    console.log('Loading more lines for', fileName);
+    console.log('loadMoreLines called');
+    
     if (isLoadingRef.current) return; // prevent overlap
     const meta = metaOverride || fileMeta;
     if (!meta) return;
-    const start = nextLineRef.current; // global line to start fetching
-    if (start >= meta.numberOfLines) return; // nothing left
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[prefetch] initiating fetch from', start);
-    }
+    const start = nextLineRef.current;
+    if (start >= meta.numberOfLines) return; // done
+    
+    console.log('loadMoreLines start');
     isLoadingRef.current = true;
     setIsLoadingLines(true);
-  try {
+    let scheduled = false;
+    
+    try {
       const remaining = meta.numberOfLines - start;
       const toFetch = Math.min(LINES_PER_CHUNK, remaining);
+
+      if (toFetch < LINES_PER_CHUNK) {
+        console.log('Final chunk, fetching remaining', remaining);
+      }
+
       const res = await fetchFileLines(fileName, userId, start, meta.numberOfLines, toFetch);
       const text = res.text || '';
       let newLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-      if (newLines.length && newLines[newLines.length - 1] === '') newLines.pop();
+      if (newLines.length && newLines[newLines.length - 1] === '') 
+      {
+          newLines.pop();
+      }
       if (!newLines.length) {
         nextLineRef.current = meta.numberOfLines;
         setNextLineToLoad(meta.numberOfLines);
         return;
       }
-      setDocContent(prev => {
-        const combined = start === 0 ? newLines : [...prev, ...newLines];
-        // Trim head if buffer grows too large
-        if (combined.length > MAX_BUFFER_LINES) {
-          const overflow = combined.length - MAX_BUFFER_LINES;
-          const trimmed = combined.slice(overflow);
-          windowStartRef.current += overflow;
-          setWindowStart(windowStartRef.current);
-          // Adjust stored viewport (global indices shift down by overflow)
-          if (lastViewportRef.current.last !== -1) {
-            lastViewportRef.current = {
-              first: lastViewportRef.current.first + overflow,
-              last: lastViewportRef.current.last + overflow,
-            };
-          }
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[virtual-window] trimmed', overflow, 'new windowStart', windowStartRef.current, 'buffer size', trimmed.length);
-          }
-          return trimmed;
+      // Apply similarity-based highlights for this chunk if provided
+      try {
+        if (res && Array.isArray(res.simularities)) {
+          processSimilarityChunk(res.simularities, start, newLines.length, meta);
         }
-        return combined;
-      });
-      const newGlobalNext = start + newLines.length;
-      nextLineRef.current = newGlobalNext;
-      setNextLineToLoad(newGlobalNext);
-  lastAdvanceTsRef.current = Date.now();
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[stream] fetched lines', start, '->', newGlobalNext, 'of', meta.numberOfLines);
+      } catch (e) {
+        console.warn('processSimilarityChunk failed (non-virtual)', e);
+      }
+      setDocContent(prev => (start === 0 ? newLines : [...prev, ...newLines]));
+      const newStart = start + newLines.length;
+      nextLineRef.current = newStart;
+      setNextLineToLoad(newStart);
+      const activeLoadId = loadIdOverride ?? fileLoadIdRef.current;
+    if (!useVirtual && newStart < meta.numberOfLines && activeLoadId === fileLoadIdRef.current) {
+        scheduled = true;
+        console.log('loadMoreLines setTimeout');
+        setTimeout(() => {
+          if (activeLoadId === fileLoadIdRef.current) {
+            loadMoreLines(fileName, meta);
+          }
+        }, 0);
       }
     } catch (e) {
-      const status = e?.response?.status;
       console.error('Failed to load lines', e);
-      if (status === 500) {
-        const entry = retryMapRef.current[start] || { attempts: 0, nextDelayMs: 500 };
-        entry.attempts += 1;
-        if (entry.attempts > 5) {
-          setFetchError({ message: `Server error at line ${start}. Gave up after ${entry.attempts - 1} retries.`, atLine: start });
-        } else {
-          // schedule retry with exponential backoff
-          const delay = entry.nextDelayMs;
-            entry.nextDelayMs = Math.min(entry.nextDelayMs * 2, 8000);
-          retryMapRef.current[start] = entry;
-          setTimeout(() => {
-            if (!isLoadingRef.current && fileName === currentServerFile?.fileName && nextLineRef.current === start) {
-              loadMoreLines(fileName, meta);
-            }
-          }, delay);
-        }
-      } else {
-        setFetchError({ message: `Fetch failed at line ${start}: ${e.message || 'unknown error'}`, atLine: start });
-      }
     } finally {
       isLoadingRef.current = false;
-      setIsLoadingLines(false);
-  // Bootstrap disabled (single initial chunk only); subsequent loads driven by viewport / fallback interval
+      if (!scheduled) setIsLoadingLines(false); else setIsLoadingLines(false); // keep indicator simple
     }
-  }, [fileMeta, userId, currentServerFile]);
+     console.log('loadMoreLines end');
+  }, [fileMeta, userId, useVirtual]);
 
-  const adaptiveBootstrap = useCallback((meta, fileName) => {
-    // Only ensure minimal scrollability once; do not chain indefinitely
-    if (!editorApiRef.current || !editorApiRef.current.getViewportInfo) return;
-    const info = editorApiRef.current.getViewportInfo();
-    if (!info) return;
-    const needLines = info.capacity + 5; // small buffer just beyond viewport
-    if (docContent.length < needLines && nextLineRef.current < meta.numberOfLines) {
-      if (!isLoadingRef.current) {
-        loadMoreLines(fileName, meta);
+  const handleAnalyze = useCallback(async () => {
+    // Only allow analysis when a server file is explicitly selected
+    if (!currentServerFile || !currentServerFile.fileName) return;
+    const targetFile = currentServerFile.fileName;
+    if (analyzeStatus.running) return; // prevent duplicate starts
+    setAnalyzeStatus({ running: true, progress: { message: 'Starting…', pct: 0 }, file: targetFile, error: null });
+    try {
+      // Provide a progress callback the websocket handler can call later (once integrated fully)
+      const progressCb = (update) => {
+        // Expect update shape maybe { pct, message/status, error }
+        setAnalyzeStatus(prev => {
+          if (!prev.running) return prev;
+          const pct = update?.pct;
+          const statusText = update?.message || update?.status;
+          const isComplete = (typeof pct === 'number' && pct >= 100) || /done|complete|finished/i.test(statusText || '');
+          if (update?.error) {
+            return { running: false, progress: null, file: prev.file, error: update.error || 'Analysis failed' };
+          }
+          if (isComplete) {
+            // Briefly show 100% then reset to idle state after a short delay
+            // Keep internal progress but schedule reset
+            setTimeout(() => {
+              setAnalyzeStatus(current => current.file === prev.file ? { running: false, progress: null, file: prev.file, error: null } : current);
+            }, 600);
+            return { ...prev, progress: { ...update, pct: 100, message: statusText || 'Complete' } };
+          }
+            return { ...prev, progress: update };
+        });
+      };
+      await AnalyzeFile(targetFile, userId, progressCb);
+      // Since AnalyzeFile currently returns null immediately, we simulate ongoing progress until websocket events arrive.
+    } catch (e) {
+      setAnalyzeStatus({ running: false, progress: null, file: targetFile, error: 'Failed to start analysis' });
+    }
+  }, [currentServerFile, userId, analyzeStatus.running]);
+
+  // Provide a stable handler for virtualized line requests (moved out of JSX)
+  const handleRequestLines = useCallback(async (start, end) => {
+    try {
+      if (!currentServerFile || !fileMeta) return [];
+      const len = end - start;
+      const res = await fetchFileLines(currentServerFile.fileName, userId, start, fileMeta.numberOfLines, len);
+      const text = (res && res.text) ? res.text : '';
+      let lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+
+      if (lines.length !== len)
+        console.error(`onRequestLines failed got ${lines.length} instead of ${len}`);
+      // else
+      //   console.log(`onRequestLines succeeded got ${lines.length} lines, first line starts with:`, lines[0].slice(0,60));
+
+      if (lines.length && lines[lines.length - 1] === '') 
+      {
+        console.log(`lines.pop`);
+        lines.pop();
       }
-    }
-  }, [docContent.length, loadMoreLines]);
-
-  // Viewport driven prefetch (bottom) & optional backward fetch (not yet enabled)
-  const handleViewportChange = useCallback(({ firstVisibleLine, lastVisibleLine, cause, capacity }) => {
-    if (!fileMeta || !currentServerFile) 
-    {
-      console.log('[handleViewportChange] not entered, fileMeta = ', fileMeta, 'currentServerFile = ', currentServerFile);
-      return;
-    }
-    else {
-      console.log('[handleViewportChange] entered');
-    }
-
-    // firstVisibleLine / lastVisibleLine already include lineNumberOffset (global indexes)
-    const globalFirst = firstVisibleLine;
-    const globalLast = lastVisibleLine;
-  lastViewportRef.current = { first: globalFirst, last: globalLast };
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[viewport]', { globalFirst, globalLast, loadedEnd: nextLineRef.current, windowStart: windowStartRef.current });
-    }
-  // Bottom prefetch (only on actual user scroll events)
-    const loadedEnd = nextLineRef.current; // exclusive
-    const cap = capacity || (lastVisibleLine - firstVisibleLine + 1) || 50;
-  const userScrolled = cause === 'scroll' && globalLast > lastGlobalLastRef.current;
-  if (userScrolled) lastGlobalLastRef.current = globalLast;
-    const distanceAhead = (loadedEnd - 1) - globalLast; // lines ahead of viewport
-    if (process.env.NODE_ENV === 'development' && cause === 'scroll') {
-      console.log('[scroll-eval]', { globalLast, loadedEnd, distanceAhead, cap, threshold: PREFETCH_AHEAD });
-    }
-    // Primary prefetch: user scroll forward & near end of loaded buffer
-    if (loadedEnd < fileMeta.numberOfLines && userScrolled && distanceAhead < PREFETCH_AHEAD) {
-      if (process.env.NODE_ENV === 'development') console.log('[prefetch-trigger] scroll-threshold');
-      loadMoreLines(currentServerFile.fileName, fileMeta);
-    }
-    // Secondary prefetch: irrespective of monotonic increase (handles virtual window resets) throttled by time
-    else if (loadedEnd < fileMeta.numberOfLines && distanceAhead < PREFETCH_AHEAD / 2) {
-      const now = Date.now();
-      if (now - lastPrefetchTsRef.current > 500 && !isLoadingRef.current) {
-        lastPrefetchTsRef.current = now;
-        if (process.env.NODE_ENV === 'development') console.log('[prefetch-trigger] distance-only');
-        loadMoreLines(currentServerFile.fileName, fileMeta);
-      }
-    }
-
-    // Dynamic trimming of lines before viewport to keep memory bounded earlier than hard MAX_BUFFER_LINES
-    // Keep only TARGET_BACK_BUFFER lines behind first visible line when possible
-    const backDistance = globalFirst - windowStartRef.current; // how many lines we already have behind
-    if (backDistance > TARGET_BACK_BUFFER) {
-      const trimCount = backDistance - TARGET_BACK_BUFFER; // lines to drop from head
-      setDocContent(prev => {
-        if (trimCount <= 0 || trimCount >= prev.length) return prev;
-        const sliced = prev.slice(trimCount);
-        windowStartRef.current += trimCount;
-        setWindowStart(windowStartRef.current);
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[dynamic-trim]', { trimCount, newWindowStart: windowStartRef.current, newLen: sliced.length });
+      // Process similarity highlights for this virtual chunk
+      try {
+        if (res && Array.isArray(res.simularities)) {
+          processSimilarityChunk(res.simularities, start, lines.length, fileMeta);
         }
-        return sliced;
-      });
-    }
-    // (Future) Top prefetch for backward scrolling if we trimmed
-    if (ENABLE_BACKWARD_FETCH && windowStartRef.current > 0 && (globalFirst - TOP_PREFETCH_MARGIN) <= windowStartRef.current) {
-      // TODO: implement backward fetch (prepend) logic
-    }
-  }, [fileMeta, currentServerFile, loadMoreLines]);
-
-  // Fallback: if page scrolls (outer document, not Monaco internal) and Monaco didn't emit scroll events
-  useEffect(() => {
-    if (!currentServerFile || !fileMeta) return;
-    // (Reverted) window scroll fallback removed
-  }, [currentServerFile, fileMeta, loadMoreLines]);
-  // (Reverted) polling fallback removed
-
-  // Guarded fallback interval: only active if user viewport is near bottom of loaded region
-  useEffect(() => {
-    if (!currentServerFile || !fileMeta) return;
-    const id = setInterval(() => {
-      const { last } = lastViewportRef.current;
-      if (last === -1) return; // no viewport yet
-      const loadedEnd = nextLineRef.current; // exclusive
-      if (loadedEnd >= fileMeta.numberOfLines) return; // finished
-      if (last + BOTTOM_PREFETCH_MARGIN >= loadedEnd - 1 && !isLoadingRef.current) {
-        loadMoreLines(currentServerFile.fileName, fileMeta);
+      } catch (e) {
+        console.warn('processSimilarityChunk failed (virtual)', e);
       }
-    }, 1200);
-    return () => clearInterval(id);
-  }, [currentServerFile, fileMeta, loadMoreLines]);
-
-  // Anti-stall watchdog: if no advancement for a while and we're near end, force a fetch
-  useEffect(() => {
-    if (!currentServerFile || !fileMeta) return;
-    const id = setInterval(() => {
-      const loadedEnd = nextLineRef.current;
-      if (loadedEnd >= fileMeta.numberOfLines) return;
-      const now = Date.now();
-      // 4s without progress while viewport close to tail
-      const { last } = lastViewportRef.current;
-      if (last !== -1) {
-        const distanceAhead = (loadedEnd - 1) - last;
-        if (distanceAhead < PREFETCH_AHEAD && (now - lastAdvanceTsRef.current) > 4000 && !isLoadingRef.current) {
-          if (process.env.NODE_ENV === 'development') console.log('[watchdog] forcing prefetch');
-          loadMoreLines(currentServerFile.fileName, fileMeta);
-        }
+      // After the first viewport-driven chunk, prefetch the rest in the background to
+      // populate similarity highlights across the whole file for the minimap/view.
+      if (useVirtual && !similarityPrefetchStartedRef.current) {
+        similarityPrefetchStartedRef.current = true;
+        const snapshot = fileLoadIdRef.current;
+        // Start prefetch from the end of the current request to avoid immediate duplication
+        setTimeout(() => {
+          if (snapshot === fileLoadIdRef.current && currentServerFile && fileMeta) {
+            prefetchSimilarityForRemainingChunks(currentServerFile.fileName, fileMeta, end, snapshot);
+          }
+        }, 0);
       }
-    }, 2500);
-    return () => clearInterval(id);
-  }, [currentServerFile, fileMeta, loadMoreLines]);
-  // (Removed aggressive fallback interval that caused whole-file loading). If needed later, reintroduce with a guard.
+      return lines;
+    } 
+    catch (e) {
+      console.warn('onRequestLines failed', e);
+      return [];
+    }
+  }, [currentServerFile, fileMeta, userId, processSimilarityChunk, prefetchSimilarityForRemainingChunks, useVirtual]);
 
   return (
     <div className="app-container">
@@ -474,7 +575,35 @@ function App() {
               </select>
             </label>
           </div>
-          <button className="analyse-btn">Analyse</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              className={`analyse-btn ${analyzeStatus.running ? 'is-running' : ''} ${analyzeStatus.running && (!analyzeStatus.progress || analyzeStatus.progress.pct == null) ? 'indeterminate' : ''} ${analyzeStatus.running && analyzeStatus.progress?.pct != null ? 'determinate' : ''}`}
+              onClick={handleAnalyze}
+              disabled={analyzeStatus.running || !currentServerFile}
+              aria-busy={analyzeStatus.running || undefined}
+              aria-live="polite"
+              aria-label={analyzeStatus.running
+                ? (analyzeStatus.progress?.pct != null
+                    ? `Analysing ${analyzeStatus.progress.pct.toFixed(0)} percent - ${analyzeStatus.progress.message || ''}`
+                    : `Analysing - ${analyzeStatus.progress?.message || 'in progress'}`)
+                : (!currentServerFile ? 'Select a file to analyse' : 'Analyse file')}
+            >
+              <span className="btn-progress-label">
+                {analyzeStatus.running ? 'Analysing…' : (currentServerFile ? 'Analyse' : 'Analyse')}
+              </span>
+              {analyzeStatus.running && (
+                <span className="btn-progress-track" aria-hidden="true">
+                  <span
+                    className="btn-progress-fill"
+                    style={analyzeStatus.progress?.pct != null ? { width: `${Math.min(100, Math.max(0, analyzeStatus.progress.pct))}%` } : undefined}
+                  />
+                </span>
+              )}
+            </button>
+            {analyzeStatus.error && !analyzeStatus.running && (
+              <span style={{ fontSize: '0.7rem', color: 'var(--danger, #e57373)' }}>{analyzeStatus.error}</span>
+            )}
+          </div>
           <button
             className="theme-toggle-btn"
             onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
@@ -483,26 +612,6 @@ function App() {
         </div>
       </header>
       <div className="highlight-selector-wrapper layout-row">
-        {fetchError && (
-          <div style={{ background: 'var(--warning-bg, #553)', color: '#ffb', padding: '6px 10px', borderRadius: 6, fontSize: '0.75rem', display: 'flex', gap: 12, alignItems: 'center' }}>
-            <span>{fetchError.message}</span>
-            <button
-              style={{ fontSize: '0.7rem', padding: '4px 8px' }}
-              onClick={() => {
-                setFetchError(null);
-                // Retry from failed point if still selected file
-                if (currentServerFile && !isLoadingRef.current) {
-                  // ensure pointer stays at failed start
-                  if (typeof fetchError.atLine === 'number') {
-                    nextLineRef.current = fetchError.atLine;
-                    setNextLineToLoad(fetchError.atLine);
-                  }
-                  loadMoreLines(currentServerFile.fileName, fileMeta);
-                }
-              }}
-            >Retry</button>
-          </div>
-        )}
         <HighlightSelector
           highlightTypes={highlightTypes}
           active={activeHighlights}
@@ -512,56 +621,94 @@ function App() {
           showColorManager={showColorManager}
           onToggleColors={() => setShowColorManager(v => !v)}
         />
-        {process.env.NODE_ENV === 'development' && currentServerFile && fileMeta && (
-          <button style={{ marginLeft: 12, fontSize: '0.7rem' }} onClick={() => loadMoreLines(currentServerFile.fileName, fileMeta)} disabled={isLoadingLines}>Dev Load Next</button>
-        )}
       </div>
       {showColorManager && (
         <section className="color-manager-panel">
           <div className="color-manager-inner layout-row">
-            <h4>Highlight Colors</h4>
-            <ul>
+            <h4>Highlight Colors & Thresholds</h4>
+            <div className="color-grid" role="table" aria-label="Highlight groups">
+              <div className="color-grid-head" role="row">
+                <span role="columnheader">Group</span>
+                <span role="columnheader">Color</span>
+                <span role="columnheader">Hex</span>
+                <span role="columnheader">Threshold</span>
+                <span role="columnheader" style={{ textAlign: 'right' }}>Actions</span>
+              </div>
               {highlightTypes.map(ht => (
-                <li key={ht.type} className="color-row">
-                  <span className="color-label">{ht.label}</span>
-                  <input
-                    type="color"
-                    className="color-input"
-                    value={/^#[0-9a-fA-F]{6}$/.test(ht.color) ? ht.color : '#cccccc'}
-                    title={`Pick color for ${ht.label}`}
-                    onChange={(e) => updateHighlightColor(ht.type, e.target.value)}
-                  />
-                  <input
-                    className="color-text-input"
-                    value={ht.color}
-                    aria-label={`Color hex for ${ht.label}`}
-                    onChange={(e) => updateHighlightColor(ht.type, e.target.value)}
-                  />
-                </li>
+                <div key={ht.type} className="color-grid-row" role="row">
+                  <span className="cg-label" role="cell">{ht.label}</span>
+                  <span role="cell">
+                    <input
+                      type="color"
+                      className="color-input"
+                      value={/^#[0-9a-fA-F]{6}$/.test(ht.color) ? ht.color : '#cccccc'}
+                      title={`Pick color for ${ht.label}`}
+                      onChange={(e) => updateHighlightColor(ht.type, e.target.value)}
+                    />
+                  </span>
+                  <span role="cell">
+                    <input
+                      className="color-text-input"
+                      value={ht.color}
+                      aria-label={`Color hex for ${ht.label}`}
+                      onChange={(e) => updateHighlightColor(ht.type, e.target.value)}
+                    />
+                  </span>
+                  <span role="cell">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      className="color-text-input threshold-input"
+                      value={(() => { const t = typeof ht.threshold === 'number' ? ht.threshold : DEFAULT_SIMILARITY_THRESHOLD; return Math.abs(t); })()}
+                      aria-label={`Similarity threshold magnitude for ${ht.label}`}
+                      title="Similarity match threshold (positive magnitude). Actual match if score < -value. Range 0..1."
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === '' ) return; // ignore empty
+                        const mag = Math.max(0, Math.min(1, Number(raw)));
+                        if (!Number.isFinite(mag)) return;
+                        // store as negative value internally
+                        updateHighlightThreshold(ht.type, -mag);
+                      }}
+                    />
+                  </span>
+                  <span role="cell" className="cg-actions">
+                    {ht.origin === 'similarity' && (
+                      <button
+                        type="button"
+                        className="apply-btn"
+                        onClick={() => recomputeSimilarityType(ht.type)}
+                        title="Recompute highlights for this similarity group using current threshold"
+                      >Apply↻</button>
+                    )}
+                  </span>
+                </div>
               ))}
-            </ul>
+            </div>
+            <p style={{ width: '100%', fontSize: '0.65rem', color: 'var(--text-soft)', marginTop: 8 }}>
+              Threshold now shown as a positive magnitude (0..1). Internally a score matches when raw similarity &lt; -magnitude. Changing a value does not auto re-filter; use Apply↻ to recompute.
+            </p>
           </div>
         </section>
       )}
     <main className="editor-main">
   <div className="layout-row" style={{ alignItems: 'stretch', gap: '3px' }}>
+          {/* Performance tuning: smaller virtualChunkSize lowers per-fetch payload -> smoother scroll at cost of more requests */}
           <Editor
             content={docContent}
             setContent={setDocContent}
-            highlights={highlights.map(h => {
-              // Rebase highlight lines relative to current window
-              const wl = h.line - windowStart;
-              if (wl < 0 || wl >= docContent.length) return null;
-              return { ...h, line: wl };
-            }).filter(Boolean)}
+            highlights={highlights}
             highlightTypes={highlightTypes}
             theme={theme}
             fontSize={fontSize}
-            lineNumberOffset={windowStart}
-            totalLines={fileMeta?.numberOfLines || null}
-            loadedEndGlobal={windowStart + docContent.length}
-            onViewportChange={handleViewportChange}
             onRegisterApi={(api) => { editorApiRef.current = api; }}
+            virtualFileMeta={useVirtual && currentServerFile && fileMeta ? fileMeta : null}
+            onRequestLines={useVirtual && currentServerFile && fileMeta ? handleRequestLines : null}
+            virtualChunkSize={10000}
+            virtualPreload={5000}
+            virtualPlaceholderLines={useVirtual && fileMeta ? fileMeta.numberOfLines : null}
           />
           <MiniMap
             content={docContent}
@@ -570,6 +717,7 @@ function App() {
             width={minimapWidth}
             onResizeWidth={setMinimapWidth}
             theme={theme}
+            totalLines={useVirtual && fileMeta ? fileMeta.numberOfLines : docContent.length}
             onNavigate={(line) => {
               if (editorApiRef.current && editorApiRef.current.setCursorToLine) {
                 editorApiRef.current.setCursorToLine(line);
