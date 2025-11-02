@@ -697,6 +697,7 @@ function App() {
   <div className="layout-row" style={{ alignItems: 'stretch', gap: '3px' }}>
           {/* Performance tuning: smaller virtualChunkSize lowers per-fetch payload -> smoother scroll at cost of more requests */}
           <Editor
+            key={`${theme}-${useVirtual ? 'virtual' : 'std'}-${currentServerFile ? currentServerFile.fileName : 'local'}-${fileMeta ? fileMeta.numberOfLines : docContent.length}-${fileLoadIdRef.current}`}
             content={docContent}
             setContent={setDocContent}
             highlights={highlights}
