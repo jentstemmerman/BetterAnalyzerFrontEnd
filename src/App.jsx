@@ -350,8 +350,8 @@ function App() {
       }
   if (fileLoadIdRef.current !== loadIdSnapshot) return; // selection changed
       setFileMeta(meta);
-      // Decide virtualization: enable if file larger than one chunk (or always true if desired)
-      const shouldVirtualize = meta.numberOfLines > LINES_PER_CHUNK; // heuristic
+  // Always virtualize server files to avoid large value re-renders in Monaco
+  const shouldVirtualize = true;
       setUseVirtual(shouldVirtualize);
       if (shouldVirtualize) {
         // In virtual mode don't eagerly load lines; editor will fetch on demand
@@ -378,6 +378,8 @@ function App() {
             // Only process similarities; do not mutate content in virtual mode
             processSimilarityChunk(res.simularities, start, len, meta);
           }
+          // Yield briefly to keep UI/fetch cadence responsive
+          await new Promise(r => setTimeout(r, 8));
         } catch (e) {
           console.warn('prefetchSimilarityForRemainingChunks failed at', start, e);
         }
@@ -707,8 +709,8 @@ function App() {
             onRegisterApi={(api) => { editorApiRef.current = api; }}
             virtualFileMeta={useVirtual && currentServerFile && fileMeta ? fileMeta : null}
             onRequestLines={useVirtual && currentServerFile && fileMeta ? handleRequestLines : null}
-            virtualChunkSize={10000}
-            virtualPreload={5000}
+            virtualChunkSize={4000}
+            virtualPreload={2000}
             virtualPlaceholderLines={useVirtual && fileMeta ? fileMeta.numberOfLines : null}
           />
           <MiniMap
