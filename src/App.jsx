@@ -36,22 +36,15 @@ function App() {
   const [currentServerFile, setCurrentServerFile] = useState(null); // entry object
   const [currentServerIndex, setCurrentServerIndex] = useState(-1);
   const [fileMeta, setFileMeta] = useState(null); // { size, numberOfLines }
-  const [nextLineToLoad, setNextLineToLoad] = useState(0);
-  const [isLoadingLines, setIsLoadingLines] = useState(false);
   const [useVirtual, setUseVirtual] = useState(false); // enable monaco viewport-driven loading
   const [analyzeStatus, setAnalyzeStatus] = useState({ running: false, progress: null, file: null, error: null });
   const fileLoadIdRef = React.useRef(0);
-  const nextLineRef = React.useRef(0);
-  const isLoadingRef = React.useRef(false);
-  const LINES_PER_CHUNK = 10000;
   // Default similarity threshold (used when a highlight group doesn't have its own)
   const DEFAULT_SIMILARITY_THRESHOLD = -0.8;
   // Map similarity name -> highlight type key (stable per file)
   const simTypeMapRef = React.useRef(new Map());
   // Store raw similarity score arrays per similarity group name (value: { type, scores: number[], totalLines })
   const similarityScoresRef = React.useRef(new Map());
-  // Track whether we've kicked off a background prefetch for similarity data (virtual mode)
-  const similarityPrefetchStartedRef = React.useRef(false);
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -178,64 +171,11 @@ function App() {
     let i = 1;
     while (used.has(slug)) slug = `${slugBase}-${i++}`;
     const color = randomPastel();
-  const newType = { type: slug, label: key, color, threshold: DEFAULT_SIMILARITY_THRESHOLD, origin: 'similarity' };
-    // Record mapping first to avoid races from concurrent chunk loads
+    const newType = { type: slug, label: key, color, threshold: DEFAULT_SIMILARITY_THRESHOLD, origin: 'similarity' };
     simTypeMapRef.current.set(key, slug);
-    // Register new highlight type BUT do NOT auto-enable.
-    // This change ensures that when a new file loads, all similarity-derived
-    // highlight groups start disabled by default until the user explicitly toggles them.
     setHighlightTypes(prev => [...prev, newType]);
     return slug;
   }, [highlightTypes]);
-
-  // Process similarities for a fetched chunk and add matching highlights
-  const processSimilarityChunk = useCallback((simularities, startIndex, length, meta) => {
-    if (!Array.isArray(simularities) || !simularities.length || !Number.isInteger(startIndex) || length <= 0) return;
-    const totalLines = meta?.numberOfLines;
-    const pendingAdds = [];
-    for (const s of simularities) {
-      const name = s.name ?? s.simularity_file ?? 'similarity';
-      let arr = s.simularities ?? s.values ?? s.scores ?? s.array ?? s.floats;
-      if (!arr || (!Array.isArray(arr) && !(arr && typeof arr.length === 'number'))) continue;
-      // Convert TypedArray to plain numbers if necessary
-      if (arr && typeof arr.length === 'number' && !Array.isArray(arr)) {
-        try { arr = Array.from(arr); } catch { continue; }
-      }
-      if (!arr.length) continue;
-      const type = ensureSimilarityType(name);
-      // Determine threshold for this type (fallback to default)
-      const typeThreshold = (highlightTypes.find(h => h.type === type)?.threshold ?? DEFAULT_SIMILARITY_THRESHOLD);
-      // Persist full score array (only once) if it matches totalLines; else merge chunk region.
-      if (Number.isInteger(totalLines)) {
-        const entry = similarityScoresRef.current.get(type) || { type, scores: new Array(totalLines).fill(null), totalLines };
-        // Fill the region represented by this chunk.
-        for (let i = 0; i < length; i++) {
-          const idx = (Number.isInteger(totalLines) && arr.length === totalLines) ? (startIndex + i) : (startIndex + i);
-          // Guard index
-          if (idx >= 0 && idx < entry.scores.length) {
-            const val = arr[(arr.length === totalLines) ? idx : i];
-            if (typeof val === 'number' && entry.scores[idx] == null) entry.scores[idx] = val;
-          }
-        }
-        similarityScoresRef.current.set(type, entry);
-      }
-      const useWholeFile = Number.isInteger(totalLines) && arr.length === totalLines;
-      for (let i = 0; i < length; i++) {
-        const idx = useWholeFile ? (startIndex + i) : i;
-        const v = arr[idx];
-        if (typeof v === 'number' && v < typeThreshold) {
-          pendingAdds.push({ line: startIndex + i, type });
-        }
-      }
-    }
-    if (!pendingAdds.length) return;
-    setDocHighlights(prev => {
-      if (!prev || !prev.length) return [...pendingAdds];
-      const have = new Set(prev.map(h => `${h.line}:${h.type}`));
-      const filtered = pendingAdds.filter(h => !have.has(`${h.line}:${h.type}`));
-      return filtered.length ? [...prev, ...filtered] : prev;
-    });
-  }, [ensureSimilarityType, highlightTypes]);
 
   // Retroactively recompute highlights for a given similarity type based on stored scores & current threshold
   const recomputeSimilarityType = useCallback((type) => {
@@ -250,9 +190,7 @@ function App() {
       if (typeof v === 'number' && v < threshold) additions.push({ line: i, type });
     }
     setDocHighlights(prev => {
-      // Remove existing highlights for this type first, then add recomputed set
       const filteredPrev = prev.filter(h => h.type !== type);
-      // De-duplicate additions for safety
       const seen = new Set();
       const dedup = [];
       for (const a of additions) {
@@ -334,11 +272,8 @@ function App() {
     // Reset similarity mapping per new file
     simTypeMapRef.current = new Map();
     similarityScoresRef.current = new Map();
-  similarityPrefetchStartedRef.current = false;
     setFileMeta(null);
-    setNextLineToLoad(0);
     setUseVirtual(false);
-    nextLineRef.current = 0;
     fileLoadIdRef.current += 1; // invalidate previous loads
     const loadIdSnapshot = fileLoadIdRef.current;
     // Fetch metadata then first chunk
@@ -356,103 +291,13 @@ function App() {
       if (shouldVirtualize) {
         // In virtual mode don't eagerly load lines; editor will fetch on demand
         setDocContent([]); // keep empty; virtual model supplies blank lines
-      } else {
-        await loadMoreLines(entry.fileName, meta, loadIdSnapshot);
       }
     } catch (e) {
       setDocContent([`Error loading file ${entry.fileName}`]);
     }
   };
 
-  // Background prefetch of similarity data for remaining chunks (virtual mode)
-  const prefetchSimilarityForRemainingChunks = useCallback(async (fileName, meta, startAt, loadId) => {
-    try {
-      const total = meta?.numberOfLines ?? 0;
-      if (!total || startAt >= total) return;
-      for (let start = Math.max(0, startAt); start < total; start += LINES_PER_CHUNK) {
-        if (fileLoadIdRef.current !== loadId) return; // file changed, stop
-        const len = Math.min(LINES_PER_CHUNK, total - start);
-        try {
-          const res = await fetchFileLines(fileName, userId, start, total, len, { similaritiesOnly: true });
-          if (res && Array.isArray(res.simularities)) {
-            // Only process similarities; do not mutate content in virtual mode
-            processSimilarityChunk(res.simularities, start, len, meta);
-          }
-          // Yield briefly to keep UI/fetch cadence responsive
-          await new Promise(r => setTimeout(r, 8));
-        } catch (e) {
-          console.warn('prefetchSimilarityForRemainingChunks failed at', start, e);
-        }
-      }
-    } finally {
-      // Allow re-trigger if file changes; otherwise keep as done
-    }
-  }, [LINES_PER_CHUNK, fetchFileLines, processSimilarityChunk, userId]);
 
-  const loadMoreLines = useCallback(async (fileName, metaOverride = null, loadIdOverride = null) => {
-    console.log('loadMoreLines called');
-    
-    if (isLoadingRef.current) return; // prevent overlap
-    const meta = metaOverride || fileMeta;
-    if (!meta) return;
-    const start = nextLineRef.current;
-    if (start >= meta.numberOfLines) return; // done
-    
-    console.log('loadMoreLines start');
-    isLoadingRef.current = true;
-    setIsLoadingLines(true);
-    let scheduled = false;
-    
-    try {
-      const remaining = meta.numberOfLines - start;
-      const toFetch = Math.min(LINES_PER_CHUNK, remaining);
-
-      if (toFetch < LINES_PER_CHUNK) {
-        console.log('Final chunk, fetching remaining', remaining);
-      }
-
-      const res = await fetchFileLines(fileName, userId, start, meta.numberOfLines, toFetch);
-      const text = res.text || '';
-      let newLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-      if (newLines.length && newLines[newLines.length - 1] === '') 
-      {
-          newLines.pop();
-      }
-      if (!newLines.length) {
-        nextLineRef.current = meta.numberOfLines;
-        setNextLineToLoad(meta.numberOfLines);
-        return;
-      }
-      // Apply similarity-based highlights for this chunk if provided
-      try {
-        if (res && Array.isArray(res.simularities)) {
-          processSimilarityChunk(res.simularities, start, newLines.length, meta);
-        }
-      } catch (e) {
-        console.warn('processSimilarityChunk failed (non-virtual)', e);
-      }
-      setDocContent(prev => (start === 0 ? newLines : [...prev, ...newLines]));
-      const newStart = start + newLines.length;
-      nextLineRef.current = newStart;
-      setNextLineToLoad(newStart);
-      const activeLoadId = loadIdOverride ?? fileLoadIdRef.current;
-    if (!useVirtual && newStart < meta.numberOfLines && activeLoadId === fileLoadIdRef.current) {
-        scheduled = true;
-        console.log('loadMoreLines setTimeout');
-        setTimeout(() => {
-          if (activeLoadId === fileLoadIdRef.current) {
-            loadMoreLines(fileName, meta);
-          }
-        }, 0);
-      }
-    } catch (e) {
-      console.error('Failed to load lines', e);
-    } finally {
-      isLoadingRef.current = false;
-      if (!scheduled) setIsLoadingLines(false); else setIsLoadingLines(false); // keep indicator simple
-    }
-     console.log('loadMoreLines end');
-  }, [fileMeta, userId, useVirtual]);
 
   const handleAnalyze = useCallback(async () => {
     // Only allow analysis when a server file is explicitly selected
@@ -509,25 +354,35 @@ function App() {
         console.log(`lines.pop`);
         lines.pop();
       }
-      // Process similarity highlights for this virtual chunk
+      // Register similarity groups and store scores (but don't add highlights automatically)
       try {
         if (res && Array.isArray(res.simularities)) {
-          processSimilarityChunk(res.simularities, start, lines.length, fileMeta);
+          const totalLines = fileMeta?.numberOfLines;
+          for (const s of res.simularities) {
+            const name = s.name ?? s.simularity_file ?? 'similarity';
+            let arr = s.simularities ?? s.values ?? s.scores ?? s.array ?? s.floats;
+            if (!arr || (!Array.isArray(arr) && !(arr && typeof arr.length === 'number'))) continue;
+            if (arr && typeof arr.length === 'number' && !Array.isArray(arr)) {
+              try { arr = Array.from(arr); } catch { continue; }
+            }
+            if (!arr.length) continue;
+            const type = ensureSimilarityType(name);
+            // Store scores so Apply↻ can recompute highlights later
+            if (Number.isInteger(totalLines)) {
+              const entry = similarityScoresRef.current.get(type) || { type, scores: new Array(totalLines).fill(null), totalLines };
+              for (let i = 0; i < lines.length; i++) {
+                const idx = start + i;
+                if (idx >= 0 && idx < entry.scores.length) {
+                  const val = arr[(arr.length === totalLines) ? idx : i];
+                  if (typeof val === 'number' && entry.scores[idx] == null) entry.scores[idx] = val;
+                }
+              }
+              similarityScoresRef.current.set(type, entry);
+            }
+          }
         }
       } catch (e) {
-        console.warn('processSimilarityChunk failed (virtual)', e);
-      }
-      // After the first viewport-driven chunk, prefetch the rest in the background to
-      // populate similarity highlights across the whole file for the minimap/view.
-      if (useVirtual && !similarityPrefetchStartedRef.current) {
-        similarityPrefetchStartedRef.current = true;
-        const snapshot = fileLoadIdRef.current;
-        // Start prefetch from the end of the current request to avoid immediate duplication
-        setTimeout(() => {
-          if (snapshot === fileLoadIdRef.current && currentServerFile && fileMeta) {
-            prefetchSimilarityForRemainingChunks(currentServerFile.fileName, fileMeta, end, snapshot);
-          }
-        }, 0);
+        console.warn('similarity group registration failed', e);
       }
       return lines;
     } 
@@ -535,7 +390,7 @@ function App() {
       console.warn('onRequestLines failed', e);
       return [];
     }
-  }, [currentServerFile, fileMeta, userId, processSimilarityChunk, prefetchSimilarityForRemainingChunks, useVirtual]);
+  }, [currentServerFile, fileMeta, userId, ensureSimilarityType]);
 
   return (
     <div className="app-container">
@@ -551,12 +406,6 @@ function App() {
               currentServerIndex={currentServerIndex}
             />
             {loadingFiles && <span style={{ fontSize: '0.7rem', color: 'var(--text-soft)' }}>Loading…</span>}
-            {currentServerFile && fileMeta && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.7rem', color: 'var(--text-soft)' }}>
-                <span>{nextLineToLoad}/{fileMeta.numberOfLines} lines</span>
-                {isLoadingLines && <span>…</span>}
-              </div>
-            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <label style={{ fontSize: '0.85rem', color: 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 6 }}>
