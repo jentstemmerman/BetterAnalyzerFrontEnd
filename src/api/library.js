@@ -193,12 +193,28 @@ export const checkAnnotations = async (fileName, userId, annotation_id) => {
   }
 };
 
-export const fetchAnnotations = async (fileName, userId, startLine, numberOfLines, annotation_id) => {
+export const fetchAnnotations = async (fileName, userId, signatureName) => {
   try {
-    const response = await axios.get(`${backendUrl}/api/file/getannotations/${fileName}`, {
-      params: { start: startLine, size: numberOfLines, annotation_id: annotation_id, userId: userId },
-    });
-    return response.data.annotations;
+    const response = await fetch(
+      `${backendUrl}/api/file/getannotations/${fileName}/${signatureName}?userId=${userId}`
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: response.statusText }));
+      console.error('Failed to fetch Annotations:', err);
+      return null;
+    }
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength === 0) return [];
+    // Each record is 2 x uint64 (16 bytes): [lineNumber, numLines]
+    const view = new BigUint64Array(buffer);
+    const annotations = [];
+    for (let i = 0; i < view.length; i += 2) {
+      annotations.push({
+        lineNumber: Number(view[i]),
+        lineCount: Number(view[i + 1]),
+      });
+    }
+    return annotations;
   } catch (error) {
     console.error('Failed to fetch Annotations:', error);
     return null;

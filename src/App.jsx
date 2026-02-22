@@ -4,7 +4,7 @@ import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
 import HighlightSelector from './components/HighlightSelector';
 import DocumentSelector from './components/DocumentSelector';
-import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile, CreateSignatureOnServer } from './api/library';
+import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile, CreateSignatureOnServer, fetchAnnotations, GetServerSignatureData } from './api/library';
 
 const exampleDocuments = [
   {
@@ -291,6 +291,48 @@ function App() {
       if (shouldVirtualize) {
         // In virtual mode don't eagerly load lines; editor will fetch on demand
         setDocContent([]); // keep empty; virtual model supplies blank lines
+      }
+
+      // Fetch all signatures and their packed annotation data
+      try {
+        const sigData = await GetServerSignatureData(userId);
+        if (fileLoadIdRef.current !== loadIdSnapshot) return; // selection changed
+        if (sigData && sigData.signatureNames && sigData.signatureNames.length > 0) {
+          const newTypes = [];
+          const newHighlights = [];
+          // Fetch packed annotations for every signature in parallel
+          const results = await Promise.all(
+            sigData.signatureNames.map(sigName =>
+              fetchAnnotations(entry.fileName, userId, sigName)
+                .then(annotations => ({ sigName, annotations }))
+                .catch(() => ({ sigName, annotations: null }))
+            )
+          );
+          if (fileLoadIdRef.current !== loadIdSnapshot) return;
+          for (const { sigName, annotations } of results) {
+            if (!annotations || !annotations.length) continue;
+            const cleanName = sigName.replace(/\.dat$/i, '').replace(/^Simularities_/i, '');
+            const slugBase = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'annotation';
+            const usedTypes = new Set([...newTypes.map(t => t.type)]);
+            let slug = `ann-${slugBase}`;
+            let ci = 1;
+            while (usedTypes.has(slug)) slug = `ann-${slugBase}-${ci++}`;
+            const color = randomPastel();
+            newTypes.push({ type: slug, label: cleanName, color, threshold: 0, origin: 'annotation' });
+            // Expand packed (lineNumber, lineCount) intervals into individual line highlights
+            for (const { lineNumber, lineCount } of annotations) {
+              for (let l = 0; l < lineCount; l++) {
+                newHighlights.push({ line: lineNumber + l, type: slug });
+              }
+            }
+          }
+          if (newTypes.length > 0) {
+            setHighlightTypes(prev => [...prev, ...newTypes]);
+            setDocHighlights(prev => [...prev, ...newHighlights]);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to fetch signature annotations:', e);
       }
     } catch (e) {
       setDocContent([`Error loading file ${entry.fileName}`]);
