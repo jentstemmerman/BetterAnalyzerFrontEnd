@@ -10,6 +10,7 @@ function Editor({
   content,
   setContent,
   highlights,
+  intervals = [],
   highlightTypes,
   theme,
   fontSize = 12,
@@ -265,7 +266,22 @@ function Editor({
         try { editor.deltaDecorations(decorationIdsRef.current, []); } catch {}
         decorationIdsRef.current = [];
       }
-      if (!valid.length) return; // nothing to apply
+      // Build interval-based range decorations (one per interval, not per line)
+      const intervalDecorations = (intervals || []).filter(
+        iv => iv.lineNumber >= 0 && iv.lineNumber + iv.lineCount <= lineCount
+      ).map(iv => {
+        const startLn = iv.lineNumber + 1;
+        const endLn = Math.min(iv.lineNumber + iv.lineCount, lineCount);
+        const endCol = Math.max(1, model.getLineMaxColumn(endLn));
+        return {
+          range: new monaco.Range(startLn, 1, endLn, endCol),
+          options: {
+            isWholeLine: true,
+            className: `highlight-line-${iv.type}`,
+          }
+        };
+      });
+      if (!valid.length && !intervalDecorations.length) return; // nothing to apply
       const decorations = valid.map(h => {
         const lineNumber = h.line + 1;
         const endCol = Math.max(1, model.getLineMaxColumn(lineNumber));
@@ -274,10 +290,9 @@ function Editor({
           options: {
             isWholeLine: true,
             className: `highlight-line-${h.type}`,
-            // inlineClassName removed to avoid duplicated layered backgrounds
           }
         };
-      });
+      }).concat(intervalDecorations);
       try {
         const newIds = editor.deltaDecorations([], decorations);
         decorationIdsRef.current = newIds;
@@ -293,7 +308,7 @@ function Editor({
       const serialized = e && e.message ? e.message : JSON.stringify(e);
       console.error('[decorations] error', serialized, e);
     }
-  }, [monaco, highlights, highlightTypes]);
+  }, [monaco, highlights, intervals, highlightTypes]);
 
   // Sync the ref AFTER updateDecorations is defined to avoid temporal dead zone
   useEffect(() => { updateDecorationsRef.current = updateDecorations; }, [updateDecorations]);
@@ -305,7 +320,9 @@ function Editor({
       cancelAnimationFrame(scheduleRef.current.af);
       clearTimeout(scheduleRef.current.to);
     }
-    const depsKey = JSON.stringify(highlights.map(h => h.line + ':' + h.type)) + '|' + highlightTypes.length + '|' + (isVirtual ? 'v' : content.length);
+    const hlKey = highlights.map(h => h.line + ':' + h.type).join(',');
+    const ivKey = intervals.map(iv => iv.lineNumber + ':' + iv.lineCount + ':' + iv.type).join(',');
+    const depsKey = hlKey + '|' + ivKey + '|' + highlightTypes.length + '|' + (isVirtual ? 'v' : content.length);
     const af = requestAnimationFrame(() => updateDecorations('raf:' + depsKey));
     const to = setTimeout(() => updateDecorations('timeout-fallback'), 120);
     scheduleRef.current = { af, to };
@@ -315,7 +332,7 @@ function Editor({
         clearTimeout(scheduleRef.current.to);
       }
     };
-  }, [monaco, highlights, highlightTypes, updateDecorations, content.length, isVirtual]);
+  }, [monaco, highlights, intervals, highlightTypes, updateDecorations, content.length, isVirtual]);
 
   // Inject highlight styles for each highlight type (once per mount / types change)
   useEffect(() => {

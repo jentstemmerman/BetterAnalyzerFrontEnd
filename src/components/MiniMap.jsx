@@ -3,7 +3,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 const MIN_MINIMAP_WIDTH = 12; // even slimmer
 const MAX_MINIMAP_WIDTH = 240; // allow a bit wider if user wants
 
-function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, onResizeWidth, theme, totalLines = null }) {
+function MiniMap({ content, highlights, highlightTypes, intervals, loading, onNavigate, width = 15, onResizeWidth, theme, totalLines = null }) {
   // Map line numbers to highlight type & contiguous span info
   const { highlightMap, spanMap } = useMemo(() => {
     const hMap = {};
@@ -86,6 +86,26 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
     return ht ? ht.color : (theme === 'light' ? '#dddddd' : 'var(--border)');
   };
 
+  // Merge intervals: combine overlapping/adjacent intervals of the same type for fewer DOM nodes
+  const mergedIntervals = useMemo(() => {
+    if (!intervals || !intervals.length) return [];
+    const sorted = [...intervals].sort((a, b) => a.type.localeCompare(b.type) || a.lineNumber - b.lineNumber);
+    const result = [];
+    let cur = { ...sorted[0] };
+    for (let i = 1; i < sorted.length; i++) {
+      const iv = sorted[i];
+      if (iv.type === cur.type && iv.lineNumber <= cur.lineNumber + cur.lineCount) {
+        const newEnd = Math.max(cur.lineNumber + cur.lineCount, iv.lineNumber + iv.lineCount);
+        cur.lineCount = newEnd - cur.lineNumber;
+      } else {
+        result.push(cur);
+        cur = { ...iv };
+      }
+    }
+    result.push(cur);
+    return result;
+  }, [intervals]);
+
   return (
     <div
       className="minimap-container"
@@ -112,6 +132,14 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
       <div className="minimap minimap-abs" style={{ flex: '1 1 auto', position: 'relative' }}
         onMouseLeave={() => setHoverInfo(null)}
       >
+        {loading && (
+          <div style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.15)', zIndex: 5, fontSize: '0.6rem',
+            color: 'var(--text-soft)'
+          }}>Loading…</div>
+        )}
         {renderAllLines && content.map((_, idx) => {
           const type = highlightMap[idx];
           const baseColor = type ? getColorForType(type) : (theme === 'light' ? '#ffffff' : 'var(--border)');
@@ -189,6 +217,36 @@ function MiniMap({ content, highlights, highlightTypes, onNavigate, width = 15, 
             );
           })
         )}
+        {/* Render interval-based annotation highlights — one <div> per interval, not per line */}
+        {mergedIntervals.map((iv, i) => {
+          const topPct = (iv.lineNumber / lineCount) * 100;
+          const heightPctRaw = (iv.lineCount / lineCount) * 100;
+          const heightPct = Math.max(heightPctRaw, 0.15);
+          return (
+            <div
+              key={`iv-${i}`}
+              className="minimap-line"
+              style={{
+                position: 'absolute', top: `${topPct}%`, height: `${heightPct}%`, left: 0, right: 0,
+                background: getColorForType(iv.type), opacity: 0.8, boxShadow: '0 0 1px rgba(0,0,0,0.4)'
+              }}
+              onMouseEnter={() => {
+                setHoverInfo({
+                  line: iv.lineNumber, type: iv.type, top: topPct,
+                  spanStart: iv.lineNumber, spanEnd: iv.lineNumber + iv.lineCount - 1
+                });
+              }}
+              onClick={() => { if (onNavigate) onNavigate(iv.lineNumber); }}
+              role={onNavigate ? 'button' : undefined}
+              tabIndex={onNavigate ? 0 : undefined}
+              aria-label={onNavigate ? `Jump to line ${iv.lineNumber + 1}` : undefined}
+              onKeyDown={(e) => {
+                if (!onNavigate) return;
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate(iv.lineNumber); }
+              }}
+            />
+          );
+        })}
         {hoverInfo && (
           <div
             className="minimap-tooltip"

@@ -25,6 +25,8 @@ function App() {
   const [activeHighlights, setActiveHighlights] = useState([]);
   const [docContent, setDocContent] = useState(exampleDocuments[0].content);
   const [docHighlights, setDocHighlights] = useState([]);
+  const [docIntervals, setDocIntervals] = useState([]); // { lineNumber, lineCount, type } — packed annotation intervals
+  const [loadingAnnotations, setLoadingAnnotations] = useState(false);
   const [groupCounter, setGroupCounter] = useState(1);
   const [theme, setTheme] = useState(() => (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   const [fontSize, setFontSize] = useState(14);
@@ -142,6 +144,7 @@ function App() {
   }, []);
 
   const highlights = docHighlights.filter(h => activeHighlights.includes(h.type));
+  const activeIntervals = docIntervals.filter(iv => activeHighlights.includes(iv.type));
 
   // Apply theme attribute & persist
   useEffect(() => {
@@ -267,6 +270,7 @@ function App() {
     setCurrentServerIndex(idx);
     setDocContent([`Loading ${entry.fileName} ...`]);
     setDocHighlights([]);
+    setDocIntervals([]);
   setHighlightTypes([]);
   setActiveHighlights([]);
     // Reset similarity mapping per new file
@@ -294,12 +298,13 @@ function App() {
       }
 
       // Fetch all signatures and their packed annotation data
+      setLoadingAnnotations(true);
       try {
         const sigData = await GetServerSignatureData(userId);
-        if (fileLoadIdRef.current !== loadIdSnapshot) return; // selection changed
+        if (fileLoadIdRef.current !== loadIdSnapshot) { setLoadingAnnotations(false); return; }
         if (sigData && sigData.signatureNames && sigData.signatureNames.length > 0) {
           const newTypes = [];
-          const newHighlights = [];
+          const newIntervals = [];
           // Fetch packed annotations for every signature in parallel
           const results = await Promise.all(
             sigData.signatureNames.map(sigName =>
@@ -308,7 +313,7 @@ function App() {
                 .catch(() => ({ sigName, annotations: null }))
             )
           );
-          if (fileLoadIdRef.current !== loadIdSnapshot) return;
+          if (fileLoadIdRef.current !== loadIdSnapshot) { setLoadingAnnotations(false); return; }
           for (const { sigName, annotations } of results) {
             if (!annotations || !annotations.length) continue;
             const cleanName = sigName.replace(/\.dat$/i, '').replace(/^Simularities_/i, '');
@@ -319,20 +324,20 @@ function App() {
             while (usedTypes.has(slug)) slug = `ann-${slugBase}-${ci++}`;
             const color = randomPastel();
             newTypes.push({ type: slug, label: cleanName, color, threshold: 0, origin: 'annotation' });
-            // Expand packed (lineNumber, lineCount) intervals into individual line highlights
+            // Keep intervals as-is — one object per interval, not per line
             for (const { lineNumber, lineCount } of annotations) {
-              for (let l = 0; l < lineCount; l++) {
-                newHighlights.push({ line: lineNumber + l, type: slug });
-              }
+              newIntervals.push({ lineNumber, lineCount, type: slug });
             }
           }
           if (newTypes.length > 0) {
             setHighlightTypes(prev => [...prev, ...newTypes]);
-            setDocHighlights(prev => [...prev, ...newHighlights]);
+            setDocIntervals(prev => [...prev, ...newIntervals]);
           }
         }
       } catch (e) {
         console.warn('Failed to fetch signature annotations:', e);
+      } finally {
+        setLoadingAnnotations(false);
       }
     } catch (e) {
       setDocContent([`Error loading file ${entry.fileName}`]);
@@ -564,6 +569,7 @@ function App() {
             content={docContent}
             setContent={setDocContent}
             highlights={highlights}
+            intervals={activeIntervals}
             highlightTypes={highlightTypes}
             theme={theme}
             fontSize={fontSize}
@@ -578,6 +584,8 @@ function App() {
             content={docContent}
             highlights={highlights}
             highlightTypes={highlightTypes}
+            intervals={activeIntervals}
+            loading={loadingAnnotations}
             width={minimapWidth}
             onResizeWidth={setMinimapWidth}
             theme={theme}
