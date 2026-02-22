@@ -396,36 +396,6 @@ function App() {
         console.log(`lines.pop`);
         lines.pop();
       }
-      // Register similarity groups and store scores (but don't add highlights automatically)
-      try {
-        if (res && Array.isArray(res.simularities)) {
-          const totalLines = fileMeta?.numberOfLines;
-          for (const s of res.simularities) {
-            const name = s.name ?? s.simularity_file ?? 'similarity';
-            let arr = s.simularities ?? s.values ?? s.scores ?? s.array ?? s.floats;
-            if (!arr || (!Array.isArray(arr) && !(arr && typeof arr.length === 'number'))) continue;
-            if (arr && typeof arr.length === 'number' && !Array.isArray(arr)) {
-              try { arr = Array.from(arr); } catch { continue; }
-            }
-            if (!arr.length) continue;
-            const type = ensureSimilarityType(name);
-            // Store scores so Apply↻ can recompute highlights later
-            if (Number.isInteger(totalLines)) {
-              const entry = similarityScoresRef.current.get(type) || { type, scores: new Array(totalLines).fill(null), totalLines };
-              for (let i = 0; i < lines.length; i++) {
-                const idx = start + i;
-                if (idx >= 0 && idx < entry.scores.length) {
-                  const val = arr[(arr.length === totalLines) ? idx : i];
-                  if (typeof val === 'number' && entry.scores[idx] == null) entry.scores[idx] = val;
-                }
-              }
-              similarityScoresRef.current.set(type, entry);
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('similarity group registration failed', e);
-      }
       return lines;
     } 
     catch (e) {
