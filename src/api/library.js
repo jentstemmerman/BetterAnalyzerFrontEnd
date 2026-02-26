@@ -278,6 +278,32 @@ export const PostProcessLogFiles = async (fileName, userId, similaritythreshold,
   }
 };
 
+/**
+ * Ask the server to re-pack a single signature's similarity data with a new
+ * threshold.  The server runs `SimilarityPacker.pack()` in a background thread
+ * and emits a `repack_complete` Socket.IO event when done.
+ *
+ * @param {string} fileName  - The log file name (e.g. "mylog.log")
+ * @param {number|string} userId
+ * @param {string} signatureName - Signature file name (e.g. "MySignature.dat")
+ * @param {number} threshold - Similarity threshold (negative, e.g. -0.5)
+ * @returns {Promise<boolean|null>} true if accepted, null on error
+ */
+export const repackSimilarity = async (fileName, userId, signatureName, threshold) => {
+  try {
+    const response = await axios.post(`${backendUrl}/api/file/repack_similarity`, {
+      fileName,
+      userId,
+      signatureName,
+      threshold,
+    });
+    return response.data.accepted ?? false;
+  } catch (error) {
+    console.error('Failed to repackSimilarity:', error);
+    return null;
+  }
+};
+
 export const closeWebSocketHandler = (fileName) => {
   const handler = webSocketHandlers.get(fileName);
   if (handler) {

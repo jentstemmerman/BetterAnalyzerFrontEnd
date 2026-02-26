@@ -4,7 +4,8 @@ import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
 import HighlightSelector from './components/HighlightSelector';
 import DocumentSelector from './components/DocumentSelector';
-import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile, CreateSignatureOnServer, fetchAnnotations, GetServerSignatureData } from './api/library';
+import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile, CreateSignatureOnServer, fetchAnnotations, GetServerSignatureData, repackSimilarity } from './api/library';
+import { getSocketIO } from './api/socketioClient';
 
 const exampleDocuments = [
   {
@@ -47,6 +48,8 @@ function App() {
   const simTypeMapRef = React.useRef(new Map());
   // Store raw similarity score arrays per similarity group name (value: { type, scores: number[], totalLines })
   const similarityScoresRef = React.useRef(new Map());
+  // Track which highlight types are currently being re-packed on the server
+  const [repackingTypes, setRepackingTypes] = useState(new Set());
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -323,7 +326,7 @@ function App() {
             let ci = 1;
             while (usedTypes.has(slug)) slug = `ann-${slugBase}-${ci++}`;
             const color = randomPastel();
-            newTypes.push({ type: slug, label: cleanName, color, threshold: 0, origin: 'annotation' });
+            newTypes.push({ type: slug, label: cleanName, color, threshold: DEFAULT_SIMILARITY_THRESHOLD, origin: 'annotation', signatureName: sigName });
             // Keep intervals as-is — one object per interval, not per line
             for (const { lineNumber, lineCount } of annotations) {
               newIntervals.push({ lineNumber, lineCount, type: slug });
@@ -381,6 +384,87 @@ function App() {
       setAnalyzeStatus({ running: false, progress: null, file: targetFile, error: 'Failed to start analysis' });
     }
   }, [currentServerFile, userId, analyzeStatus.running]);
+
+  // --- Apply threshold: server-side repack for annotation types, client-side for similarity types ---
+  const handleApplyThreshold = useCallback(async (ht) => {
+    // For types with a signatureName (annotation-origin), send to server for repacking
+    if (ht.signatureName && currentServerFile) {
+      setRepackingTypes(prev => new Set(prev).add(ht.type));
+      const accepted = await repackSimilarity(
+        currentServerFile.fileName,
+        userId,
+        ht.signatureName,
+        ht.threshold
+      );
+      if (!accepted) {
+        setRepackingTypes(prev => { const next = new Set(prev); next.delete(ht.type); return next; });
+        console.error('Server rejected repack request');
+      }
+      // Completion handled by repack_complete socket event
+    } else {
+      // Fallback: client-side recompute (for similarity-origin with stored scores)
+      recomputeSimilarityType(ht.type);
+    }
+  }, [currentServerFile, userId, recomputeSimilarityType]);
+
+  // Listen for repack_complete Socket.IO events from the server
+  useEffect(() => {
+    let socket = null;
+    let cancelled = false;
+
+    const handler = async (data) => {
+      const { signatureName, success, error: errMsg } = data || {};
+      // Find the matching highlight type by signatureName
+      const matchedHt = highlightTypes.find(h => h.signatureName === signatureName);
+      if (!matchedHt) {
+        console.warn('repack_complete: no matching highlight type for', signatureName);
+        return;
+      }
+      // Remove from repacking set
+      setRepackingTypes(prev => { const next = new Set(prev); next.delete(matchedHt.type); return next; });
+
+      if (!success) {
+        console.error('repack_complete error:', errMsg);
+        return;
+      }
+
+      // Re-fetch the updated packed annotations from the server
+      if (!currentServerFile) return;
+      try {
+        const annotations = await fetchAnnotations(currentServerFile.fileName, userId, signatureName);
+        if (!annotations) return;
+        // Replace intervals for this type
+        setDocIntervals(prev => {
+          const filtered = prev.filter(iv => iv.type !== matchedHt.type);
+          const newIntervals = annotations.map(({ lineNumber, lineCount }) => ({ lineNumber, lineCount, type: matchedHt.type }));
+          return [...filtered, ...newIntervals];
+        });
+      } catch (e) {
+        console.error('Failed to refetch annotations after repack:', e);
+      }
+    };
+
+    (async () => {
+      try {
+        const io = await getSocketIO();
+        if (cancelled || !io) return;
+        const { backendUrl } = await import('./Constants');
+        if (cancelled) return;
+        socket = io(backendUrl, { transports: ['websocket', 'polling'] });
+        socket.on('repack_complete', handler);
+      } catch (e) {
+        console.warn('Failed to open socket for repack_complete listener:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (socket) {
+        socket.off('repack_complete', handler);
+        socket.disconnect();
+      }
+    };
+  }, [highlightTypes, currentServerFile, userId]);
 
   // Provide a stable handler for virtualized line requests (moved out of JSX)
   const handleRequestLines = useCallback(async (start, end) => {
@@ -543,20 +627,21 @@ function App() {
                     />
                   </span>
                   <span role="cell" className="cg-actions">
-                    {ht.origin === 'similarity' && (
+                    {(ht.origin === 'annotation' || ht.origin === 'similarity') && (
                       <button
                         type="button"
                         className="apply-btn"
-                        onClick={() => recomputeSimilarityType(ht.type)}
-                        title="Recompute highlights for this similarity group using current threshold"
-                      >Apply↻</button>
+                        onClick={() => handleApplyThreshold(ht)}
+                        disabled={repackingTypes.has(ht.type)}
+                        title="Recompute highlights for this group using current threshold"
+                      >{repackingTypes.has(ht.type) ? '⏳' : 'Apply↻'}</button>
                     )}
                   </span>
                 </div>
               ))}
             </div>
             <p style={{ width: '100%', fontSize: '0.65rem', color: 'var(--text-soft)', marginTop: 8 }}>
-              Threshold now shown as a positive magnitude (0..1). Internally a score matches when raw similarity &lt; -magnitude. Changing a value does not auto re-filter; use Apply↻ to recompute.
+              Threshold shown as positive magnitude (0..1). For annotation groups, Apply↻ sends the threshold to the server which re-packs the data and refreshes the view.
             </p>
           </div>
         </section>
