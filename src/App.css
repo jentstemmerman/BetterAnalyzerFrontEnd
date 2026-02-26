@@ -270,6 +270,28 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 50%, transparent);
 }
 
+/* Hit-count badge on highlight buttons */
+.hit-count-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--hl-color) 25%, var(--bg));
+  color: var(--hl-color);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+}
+.highlight-btn:not(.active) .hit-count-badge {
+  opacity: 0.55;
+}
+.highlight-btn.active .hit-count-badge {
+  background: color-mix(in srgb, var(--hl-color) 35%, var(--bg));
+  color: var(--hl-color);
+  opacity: 1;
+}
+
 .editor-main {
   display: flex;
   flex: 1 1 auto;

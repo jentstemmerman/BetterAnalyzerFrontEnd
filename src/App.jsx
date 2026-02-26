@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import './App.css';
 import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
@@ -148,6 +148,17 @@ function App() {
 
   const highlights = docHighlights.filter(h => activeHighlights.includes(h.type));
   const activeIntervals = docIntervals.filter(iv => activeHighlights.includes(iv.type));
+
+  // Compute interval hit counts per highlight type for badge display
+  const hitCounts = useMemo(() => {
+    const counts = {};
+    for (const iv of docIntervals) {
+      if (!counts[iv.type]) counts[iv.type] = { intervals: 0, lines: 0 };
+      counts[iv.type].intervals += 1;
+      counts[iv.type].lines += (iv.lineCount || 1);
+    }
+    return counts;
+  }, [docIntervals]);
 
   // Apply theme attribute & persist
   useEffect(() => {
@@ -572,6 +583,8 @@ function App() {
           onCreateGroup={handleCreateGroupFromSelection}
           showColorManager={showColorManager}
           onToggleColors={() => setShowColorManager(v => !v)}
+          hitCounts={hitCounts}
+          totalLines={useVirtual && fileMeta ? fileMeta.numberOfLines : docContent.length}
         />
       </div>
       {showColorManager && (

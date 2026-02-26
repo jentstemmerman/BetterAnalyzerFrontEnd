@@ -1,6 +1,6 @@
 import React from 'react';
 
-function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreateGroup, showColorManager, onToggleColors }) {
+function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreateGroup, showColorManager, onToggleColors, hitCounts, totalLines }) {
   return (
     <div className="highlight-selector">
       {highlightTypes.map(ht => {
@@ -9,15 +9,25 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreat
         const displayLabel = (ht.label || '')
           .replace(/^Simularities_/i, '')
           .replace(/\.dat$/i, '');
+        const counts = hitCounts && hitCounts[ht.type];
+        const intervalCount = counts ? counts.intervals : 0;
+        const lineCount = counts ? counts.lines : 0;
+        const pct = totalLines > 0 ? ((lineCount / totalLines) * 100).toFixed(1) : '0.0';
+        const tooltipText = intervalCount > 0
+          ? `${displayLabel} — ${intervalCount.toLocaleString()} occurrence${intervalCount !== 1 ? 's' : ''}, ${lineCount.toLocaleString()} line${lineCount !== 1 ? 's' : ''} (${pct}% of file)`
+          : `${displayLabel} — no hits`;
         return (
           <button
             key={ht.type}
             className={`highlight-btn${isActive ? ' active' : ''}`}
             style={{ '--hl-color': ht.color }}
             onClick={() => onToggle(ht.type)}
-            title={ht.label + (removable ? ' (toggle / delete)' : '')}
+            title={tooltipText}
           >
             <span className="highlight-label">{displayLabel}</span>
+            {intervalCount > 0 && (
+              <span className="hit-count-badge">{intervalCount.toLocaleString()}</span>
+            )}
             {removable && (
               <span
                 className="remove-highlight-icon"
