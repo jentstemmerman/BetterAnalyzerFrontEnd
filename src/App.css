@@ -270,6 +270,44 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 50%, transparent);
 }
 
+/* Interval navigation arrows inside highlight buttons */
+.interval-nav-arrows {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+.interval-nav-arrow {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-soft);
+  background: transparent;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+.interval-nav-arrow:hover {
+  background: color-mix(in srgb, var(--hl-color) 30%, var(--bg));
+  color: var(--hl-color);
+  transform: scale(1.1);
+}
+.interval-nav-arrow:active {
+  transform: scale(0.9);
+}
+.highlight-btn.active .interval-nav-arrow {
+  color: var(--hl-color);
+}
+.highlight-btn.active .interval-nav-arrow:hover {
+  background: color-mix(in srgb, var(--hl-color) 40%, var(--bg));
+}
+.highlight-btn:not(.active) .interval-nav-arrow {
+  opacity: 0.5;
+}
+
 /* Hit-count badge on highlight buttons */
 .hit-count-badge {
   font-size: 0.7rem;

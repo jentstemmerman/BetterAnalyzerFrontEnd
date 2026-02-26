@@ -176,6 +176,13 @@ function App() {
 
   const editorApiRef = React.useRef(null);
 
+  // Navigate editor to a specific line (used by interval navigation)
+  const navigateToLine = useCallback((line) => {
+    if (editorApiRef.current && editorApiRef.current.setCursorToLine) {
+      editorApiRef.current.setCursorToLine(line);
+    }
+  }, []);
+
   // Ensure a similarity group exists for a name and return its type key
   const ensureSimilarityType = useCallback((name) => {
     const key = (typeof name === 'string' && name.trim()) ? name.trim() : 'similarity';
@@ -585,6 +592,8 @@ function App() {
           onToggleColors={() => setShowColorManager(v => !v)}
           hitCounts={hitCounts}
           totalLines={useVirtual && fileMeta ? fileMeta.numberOfLines : docContent.length}
+          docIntervals={docIntervals}
+          onNavigateToLine={navigateToLine}
         />
       </div>
       {showColorManager && (
