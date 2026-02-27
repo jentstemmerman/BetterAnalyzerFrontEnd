@@ -42,6 +42,7 @@ function App() {
   const [useVirtual, setUseVirtual] = useState(false); // enable monaco viewport-driven loading
   const [analyzeStatus, setAnalyzeStatus] = useState({ running: false, progress: null, file: null, error: null });
   const fileLoadIdRef = React.useRef(0);
+  const [cursorLine, setCursorLine] = useState(0); // 0-based current cursor line
   // Default similarity threshold (used when a highlight group doesn't have its own)
   const DEFAULT_SIMILARITY_THRESHOLD = -0.8;
   // Map similarity name -> highlight type key (stable per file)
@@ -594,6 +595,7 @@ function App() {
           totalLines={useVirtual && fileMeta ? fileMeta.numberOfLines : docContent.length}
           docIntervals={docIntervals}
           onNavigateToLine={navigateToLine}
+          cursorLine={cursorLine}
         />
       </div>
       {showColorManager && (
@@ -686,6 +688,7 @@ function App() {
             virtualChunkSize={4000}
             virtualPreload={2000}
             virtualPlaceholderLines={useVirtual && fileMeta ? fileMeta.numberOfLines : null}
+            onCursorLineChange={setCursorLine}
           />
           <MiniMap
             content={docContent}

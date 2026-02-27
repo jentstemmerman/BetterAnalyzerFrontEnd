@@ -21,6 +21,7 @@ function Editor({
   virtualPreload = 5000,
   virtualEvictDistanceChunks = 8,
   virtualPlaceholderLines = null,
+  onCursorLineChange = null,
 }) {
   const isVirtual = !!virtualFileMeta && !!onRequestLines && Number.isInteger(virtualFileMeta.numberOfLines);
   const value = isVirtual ? undefined : content.join('\n');
@@ -222,6 +223,13 @@ function Editor({
         });
         // Clean up on unmount
         editorRef.current.__virtualScrollDisposable = scrollDisposable;
+      }
+      // Track cursor position changes and notify parent
+      if (onCursorLineChange) {
+        const cursorDisposable = editor.onDidChangeCursorPosition((e) => {
+          onCursorLineChange(e.position.lineNumber - 1); // 0-based
+        });
+        editorRef.current.__cursorDisposable = cursorDisposable;
       }
       // Measure and set scrollbar width CSS variable for precise highlight exclusion
       try {

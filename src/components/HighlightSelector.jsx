@@ -1,30 +1,45 @@
-import React, { useState, useCallback } from 'react';
+import React, { useCallback } from 'react';
 
-function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreateGroup, showColorManager, onToggleColors, hitCounts, totalLines, docIntervals, onNavigateToLine }) {
-  // Track current navigation index per highlight type (state so tooltip re-renders)
-  const [navIndices, setNavIndices] = useState({});
+function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreateGroup, showColorManager, onToggleColors, hitCounts, totalLines, docIntervals, onNavigateToLine, cursorLine }) {
+  // Compute sorted intervals for a given type
+  const getSortedIntervals = useCallback((type) => {
+    if (!docIntervals) return [];
+    return docIntervals
+      .filter(iv => iv.type === type)
+      .sort((a, b) => a.lineNumber - b.lineNumber);
+  }, [docIntervals]);
+
+  // Find the index of the interval the cursor is currently inside or just past
+  const findCurrentIndex = useCallback((intervals) => {
+    if (!intervals || intervals.length === 0) return -1;
+    for (let i = intervals.length - 1; i >= 0; i--) {
+      const iv = intervals[i];
+      if (cursorLine >= iv.lineNumber && cursorLine < iv.lineNumber + (iv.lineCount || 1)) {
+        return i; // cursor is inside this interval
+      }
+      if (cursorLine >= iv.lineNumber) {
+        return i; // cursor is past the start of this interval
+      }
+    }
+    return -1; // cursor is before all intervals
+  }, [cursorLine]);
 
   const navigateInterval = useCallback((type, direction) => {
     if (!docIntervals || !onNavigateToLine) return;
-    const intervals = docIntervals
-      .filter(iv => iv.type === type)
-      .sort((a, b) => a.lineNumber - b.lineNumber);
+    const intervals = getSortedIntervals(type);
     if (intervals.length === 0) return;
 
-    setNavIndices(prev => {
-      const prevIdx = prev[type];
-      let idx;
-      if (prevIdx === undefined || prevIdx === null) {
-        idx = direction > 0 ? 0 : intervals.length - 1;
-      } else {
-        idx = prevIdx + direction;
-        if (idx < 0) idx = intervals.length - 1;
-        if (idx >= intervals.length) idx = 0;
-      }
-      onNavigateToLine(intervals[idx].lineNumber);
-      return { ...prev, [type]: idx };
-    });
-  }, [docIntervals, onNavigateToLine]);
+    const currentIdx = findCurrentIndex(intervals);
+    let idx;
+    if (currentIdx === -1) {
+      idx = direction > 0 ? 0 : intervals.length - 1;
+    } else {
+      idx = currentIdx + direction;
+      if (idx < 0) idx = intervals.length - 1;
+      if (idx >= intervals.length) idx = 0;
+    }
+    onNavigateToLine(intervals[idx].lineNumber);
+  }, [docIntervals, onNavigateToLine, getSortedIntervals, findCurrentIndex]);
 
   return (
     <div className="highlight-selector">
@@ -38,8 +53,9 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreat
         const intervalCount = counts ? counts.intervals : 0;
         const lineCount = counts ? counts.lines : 0;
         const pct = totalLines > 0 ? ((lineCount / totalLines) * 100).toFixed(1) : '0.0';
-        const currentIdx = navIndices[ht.type];
-        const positionText = (currentIdx !== undefined && currentIdx !== null && intervalCount > 0)
+        const sortedIntervals = getSortedIntervals(ht.type);
+        const currentIdx = findCurrentIndex(sortedIntervals);
+        const positionText = (currentIdx >= 0 && intervalCount > 0)
           ? ` — at ${currentIdx + 1} of ${intervalCount.toLocaleString()}`
           : '';
         const tooltipText = intervalCount > 0
