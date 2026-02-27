@@ -4,7 +4,7 @@ import Editor from './components/Editor';
 import MiniMap from './components/MiniMap';
 import HighlightSelector from './components/HighlightSelector';
 import DocumentSelector from './components/DocumentSelector';
-import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile, CreateSignatureOnServer, fetchAnnotations, GetServerSignatureData, repackSimilarity } from './api/library';
+import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile, CreateSignatureOnServer, fetchAnnotations, GetServerSignatureData, repackSimilarity, getUserSettings, saveUserSettings } from './api/library';
 import { getSocketIO } from './api/socketioClient';
 
 const exampleDocuments = [
@@ -70,27 +70,31 @@ function App() {
     setGroupCounter(1);
   };
 
-  // Generate a pastel HEX color (so it works with <input type="color">)
-  const randomPastel = () => {
-    const h = Math.random(); // 0..1
-    const s = 0.55; // moderate saturation
-    const l = 0.72; // lightness
-    const hue = h * 6;
-    const c = (1 - Math.abs(2 * l - 1)) * s;
-    const x = c * (1 - Math.abs((hue % 2) - 1));
-    const m = l - c / 2;
-    let r = 0, g = 0, b = 0;
-    if (hue >= 0 && hue < 1) { r = c; g = x; }
-    else if (hue >= 1 && hue < 2) { r = x; g = c; }
-    else if (hue >= 2 && hue < 3) { g = c; b = x; }
-    else if (hue >= 3 && hue < 4) { g = x; b = c; }
-    else if (hue >= 4 && hue < 5) { r = x; b = c; }
-    else { r = c; b = x; }
-    const toHex = (v) => {
-      const hv = Math.round((v + m) * 255).toString(16).padStart(2, '0');
-      return hv;
+  // Generate maximally distinct colors using golden-angle hue distribution.
+  // Each call with a different index produces a hue ~137.5° away from the previous,
+  // guaranteeing visual separation even for many groups.
+  const colorIndexRef = React.useRef(0);
+  const savedSettingsRef = React.useRef(null); // cached server settings
+  const saveSettingsTimeoutRef = React.useRef(null);
+
+  const distinctColor = (index) => {
+    const GOLDEN_ANGLE = 137.508; // degrees
+    const hue = (index * GOLDEN_ANGLE) % 360;
+    const s = 65; // % — more vivid than the old pastel
+    const l = 58; // % — slightly darker for contrast
+    // HSL to hex
+    const sF = s / 100, lF = l / 100;
+    const a = sF * Math.min(lF, 1 - lF);
+    const f = (n) => {
+      const k = (n + hue / 30) % 12;
+      const color = lF - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+      return Math.round(255 * color).toString(16).padStart(2, '0');
     };
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    return `#${f(0)}${f(8)}${f(4)}`;
+  };
+
+  const nextDistinctColor = () => {
+    return distinctColor(colorIndexRef.current++);
   };
 
   const addHighlightGroup = useCallback((name, lines) => {
@@ -103,8 +107,11 @@ function App() {
     while (existingTypes.has(type)) {
       type = `${baseType}-${i++}`;
     }
-    const color = randomPastel();
-  const newType = { type, label: name, color, threshold: DEFAULT_SIMILARITY_THRESHOLD, origin: 'manual' };
+    // Check for saved preferences for this group name
+    const savedPrefs = savedSettingsRef.current?.signaturePreferences?.[name];
+    const color = savedPrefs?.color || nextDistinctColor();
+    const threshold = savedPrefs?.threshold ?? DEFAULT_SIMILARITY_THRESHOLD;
+    const newType = { type, label: name, color, threshold, origin: 'manual' };
     setHighlightTypes(prev => [...prev, newType]);
     setActiveHighlights(prev => [...prev, type]);
     setDocHighlights(prev => {
@@ -149,6 +156,31 @@ function App() {
 
   const highlights = docHighlights.filter(h => activeHighlights.includes(h.type));
   const activeIntervals = docIntervals.filter(iv => activeHighlights.includes(iv.type));
+
+  // Debounced auto-save of signature preferences (color + threshold) to server
+  // Triggers whenever highlightTypes changes (user edits color/threshold, or new group added)
+  const prevHighlightTypesRef = React.useRef(highlightTypes);
+  useEffect(() => {
+    // Skip the very first render and only save when something actually changed
+    if (prevHighlightTypesRef.current === highlightTypes) return;
+    prevHighlightTypesRef.current = highlightTypes;
+    // Only save if we have groups to persist
+    if (!highlightTypes.length) return;
+    if (saveSettingsTimeoutRef.current) clearTimeout(saveSettingsTimeoutRef.current);
+    saveSettingsTimeoutRef.current = setTimeout(() => {
+      const prefs = {};
+      for (const ht of highlightTypes) {
+        // Use label as the key (matches cleanName / signature display name)
+        prefs[ht.label] = { color: ht.color, threshold: ht.threshold };
+      }
+      const settings = { ...(savedSettingsRef.current || {}), signaturePreferences: prefs };
+      savedSettingsRef.current = settings;
+      saveUserSettings(userId, settings);
+    }, 800);
+    return () => {
+      if (saveSettingsTimeoutRef.current) clearTimeout(saveSettingsTimeoutRef.current);
+    };
+  }, [highlightTypes, userId]);
 
   // Compute interval hit counts per highlight type for badge display
   const hitCounts = useMemo(() => {
@@ -195,8 +227,10 @@ function App() {
     let slug = slugBase;
     let i = 1;
     while (used.has(slug)) slug = `${slugBase}-${i++}`;
-    const color = randomPastel();
-    const newType = { type: slug, label: key, color, threshold: DEFAULT_SIMILARITY_THRESHOLD, origin: 'similarity' };
+    const savedPrefs = savedSettingsRef.current?.signaturePreferences?.[key];
+    const color = savedPrefs?.color || nextDistinctColor();
+    const threshold = savedPrefs?.threshold ?? DEFAULT_SIMILARITY_THRESHOLD;
+    const newType = { type: slug, label: key, color, threshold, origin: 'similarity' };
     simTypeMapRef.current.set(key, slug);
     setHighlightTypes(prev => [...prev, newType]);
     return slug;
@@ -319,10 +353,17 @@ function App() {
         setDocContent([]); // keep empty; virtual model supplies blank lines
       }
 
-      // Fetch all signatures and their packed annotation data
+      // Fetch saved user preferences (colors, thresholds) and all signatures in parallel
       setLoadingAnnotations(true);
       try {
-        const sigData = await GetServerSignatureData(userId);
+        const [sigData, savedSettings] = await Promise.all([
+          GetServerSignatureData(userId),
+          getUserSettings(userId),
+        ]);
+        savedSettingsRef.current = savedSettings;
+        // Reset color index for this file load so colors are deterministic
+        let colorIdx = 0;
+        colorIndexRef.current = 0;
         if (fileLoadIdRef.current !== loadIdSnapshot) { setLoadingAnnotations(false); return; }
         if (sigData && sigData.signatureNames && sigData.signatureNames.length > 0) {
           const newTypes = [];
@@ -344,8 +385,10 @@ function App() {
             let slug = `ann-${slugBase}`;
             let ci = 1;
             while (usedTypes.has(slug)) slug = `ann-${slugBase}-${ci++}`;
-            const color = randomPastel();
-            newTypes.push({ type: slug, label: cleanName, color, threshold: DEFAULT_SIMILARITY_THRESHOLD, origin: 'annotation', signatureName: sigName });
+            const savedPrefs = savedSettings?.signaturePreferences?.[cleanName];
+            const color = savedPrefs?.color || distinctColor(colorIdx++);
+            const threshold = savedPrefs?.threshold ?? DEFAULT_SIMILARITY_THRESHOLD;
+            newTypes.push({ type: slug, label: cleanName, color, threshold, origin: 'annotation', signatureName: sigName });
             // Keep intervals as-is — one object per interval, not per line
             for (const { lineNumber, lineCount } of annotations) {
               newIntervals.push({ lineNumber, lineCount, type: slug });
@@ -354,6 +397,8 @@ function App() {
           if (newTypes.length > 0) {
             setHighlightTypes(prev => [...prev, ...newTypes]);
             setDocIntervals(prev => [...prev, ...newIntervals]);
+            // Sync global color index so subsequent dynamic groups continue the sequence
+            colorIndexRef.current = colorIdx;
           }
         }
       } catch (e) {

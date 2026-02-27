@@ -371,3 +371,25 @@ export function CreateSignatureOnServer(signature_name, logFileName, path, userI
     console.error('UploadFile No Signature selected');
   }
 }
+
+// ---- User Settings (server-persisted) ----
+
+export const getUserSettings = async (userId) => {
+  try {
+    const response = await axios.get(`${backendUrl}/api/settings/${userId}`);
+    return (response.data && response.data.settings) ? response.data.settings : null;
+  } catch (error) {
+    // 404 = no settings file yet, not a real error
+    if (error.response && error.response.status === 404) return null;
+    console.warn('getUserSettings failed:', error);
+    return null;
+  }
+};
+
+export const saveUserSettings = async (userId, settings) => {
+  try {
+    await axios.post(`${backendUrl}/api/settings/${userId}`, { settings });
+  } catch (error) {
+    console.error('saveUserSettings failed:', error);
+  }
+};
