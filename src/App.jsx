@@ -426,6 +426,12 @@ function App() {
     }
   }, [currentServerFile, userId, recomputeSimilarityType]);
 
+  // Keep refs to avoid socket reconnection churn when highlightTypes/currentServerFile change
+  const highlightTypesRef = React.useRef(highlightTypes);
+  useEffect(() => { highlightTypesRef.current = highlightTypes; }, [highlightTypes]);
+  const currentServerFileRef = React.useRef(currentServerFile);
+  useEffect(() => { currentServerFileRef.current = currentServerFile; }, [currentServerFile]);
+
   // Listen for repack_complete Socket.IO events from the server
   useEffect(() => {
     let socket = null;
@@ -433,8 +439,8 @@ function App() {
 
     const handler = async (data) => {
       const { signatureName, success, error: errMsg } = data || {};
-      // Find the matching highlight type by signatureName
-      const matchedHt = highlightTypes.find(h => h.signatureName === signatureName);
+      // Find the matching highlight type by signatureName (use ref to avoid reconnection on every change)
+      const matchedHt = highlightTypesRef.current.find(h => h.signatureName === signatureName);
       if (!matchedHt) {
         console.warn('repack_complete: no matching highlight type for', signatureName);
         return;
@@ -448,9 +454,10 @@ function App() {
       }
 
       // Re-fetch the updated packed annotations from the server
-      if (!currentServerFile) return;
+      const serverFile = currentServerFileRef.current;
+      if (!serverFile) return;
       try {
-        const annotations = await fetchAnnotations(currentServerFile.fileName, userId, signatureName);
+        const annotations = await fetchAnnotations(serverFile.fileName, userId, signatureName);
         if (!annotations) return;
         // Replace intervals for this type
         setDocIntervals(prev => {
@@ -483,7 +490,7 @@ function App() {
         socket.disconnect();
       }
     };
-  }, [highlightTypes, currentServerFile, userId]);
+  }, [userId]); // stable deps only — highlightTypes/currentServerFile accessed via refs
 
   // Provide a stable handler for virtualized line requests (moved out of JSX)
   const handleRequestLines = useCallback(async (start, end) => {
@@ -510,7 +517,7 @@ function App() {
       console.warn('onRequestLines failed', e);
       return [];
     }
-  }, [currentServerFile, fileMeta, userId, ensureSimilarityType]);
+  }, [currentServerFile, fileMeta, userId]);
 
   return (
     <div className="app-container">

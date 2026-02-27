@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import MonacoEditor, { useMonaco } from '@monaco-editor/react';
 
 // Virtualized editor props (optional):
@@ -130,7 +130,7 @@ function Editor({
       pendingChunksRef.current.delete(chunkIdx);
       requestInflightRef.current -= 1;
     }
-  }, [isVirtual, virtualChunkSize, onRequestLines, virtualFileMeta, monaco, highlights, scheduleDecorationRefresh]);
+  }, [isVirtual, virtualChunkSize, onRequestLines, virtualFileMeta, monaco, scheduleDecorationRefresh]);
 
   // Load all chunks covering a range (now passes generation)
   const ensureRangeLoaded = useCallback((startLineZero, endLineZero, generation) => {
@@ -217,19 +217,23 @@ function Editor({
       editorRef.current = editor;
       decorationIdsRef.current = [];
       if (monaco) updateDecorations('mount');
+
+      // Clean up disposables and listeners on unmount
+      const editorInstance = editor;
+      const cleanupRef = { scrollDisposable: null, cursorDisposable: null, sbMeasure: null };
+
       if (isVirtual) {
         const scrollDisposable = editor.onDidScrollChange(() => {
           handleViewportChange();
         });
-        // Clean up on unmount
-        editorRef.current.__virtualScrollDisposable = scrollDisposable;
+        cleanupRef.scrollDisposable = scrollDisposable;
       }
       // Track cursor position changes and notify parent
       if (onCursorLineChange) {
         const cursorDisposable = editor.onDidChangeCursorPosition((e) => {
           onCursorLineChange(e.position.lineNumber - 1); // 0-based
         });
-        editorRef.current.__cursorDisposable = cursorDisposable;
+        cleanupRef.cursorDisposable = cursorDisposable;
       }
       // Measure and set scrollbar width CSS variable for precise highlight exclusion
       try {
@@ -250,14 +254,36 @@ function Editor({
         measureScrollbar();
         // Recalculate on window resize (scrollbar metrics can change with OS settings / zoom)
         window.addEventListener('resize', measureScrollbar, { passive: true });
-        editorRef.current.__sbMeasure = measureScrollbar;
+        cleanupRef.sbMeasure = measureScrollbar;
       } catch (e) {
         console.warn('[scrollbar-measure] failed', e);
       }
+      // Return value not used by Monaco onMount, so store cleanup on ref for useEffect
+      editorInstance.__cleanup = () => {
+        if (cleanupRef.scrollDisposable) {
+          try { cleanupRef.scrollDisposable.dispose(); } catch {}
+        }
+        if (cleanupRef.cursorDisposable) {
+          try { cleanupRef.cursorDisposable.dispose(); } catch {}
+        }
+        if (cleanupRef.sbMeasure) {
+          window.removeEventListener('resize', cleanupRef.sbMeasure);
+        }
+      };
     } catch (e) {
       console.error('[handleEditorDidMount] error', e);
     }
   };
+
+  // Cleanup disposables and event listeners on unmount
+  useEffect(() => {
+    return () => {
+      const editor = editorRef.current;
+      if (editor && editor.__cleanup) {
+        editor.__cleanup();
+      }
+    };
+  }, []);
 
   // Robust decorations logic
   const updateDecorations = useCallback((reason = 'unknown') => {
@@ -422,9 +448,9 @@ function Editor({
     }
   }, [highlightTypes]);
 
-  const handleChange = (newValue) => {
-    //setContent(newValue.split('\n'));
-  };
+  // onChange intentionally no-op: this is a read-only log viewer,
+  // but Monaco needs readOnly:false for selection/navigation features.
+  const handleChange = undefined;
 
   const getSelectedLines = useCallback(() => {
     const editor = editorRef.current;
@@ -559,7 +585,6 @@ function Editor({
 
   return (
   <div className="editor-container" style={{ position: 'relative' }}>
-      {process.env.NODE_ENV === 'development' && console.log('Rendering MonacoEditor')}
   {/* Create Group button removed; now surfaced in HighlightSelector */}
     <MonacoEditor
       key={theme + (isVirtual ? '-virtual-' + (virtualFileMeta ? virtualFileMeta.numberOfLines : '0') : '-std')}
