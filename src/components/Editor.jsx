@@ -274,18 +274,51 @@ function Editor({
         try { editor.deltaDecorations(decorationIdsRef.current, []); } catch {}
         decorationIdsRef.current = [];
       }
-      // Build interval-based range decorations (one per interval, not per line)
-      const intervalDecorations = (intervals || []).filter(
+      // Pre-compute per-type metadata for hover tooltips (sorted intervals, counts)
+      const validIntervals = (intervals || []).filter(
         iv => iv.lineNumber >= 0 && iv.lineNumber + iv.lineCount <= lineCount
-      ).map(iv => {
+      );
+      const typeMetaMap = {};
+      for (const iv of validIntervals) {
+        if (!typeMetaMap[iv.type]) {
+          typeMetaMap[iv.type] = { sorted: [], intervalCount: 0, totalTypeLines: 0 };
+        }
+        typeMetaMap[iv.type].intervalCount += 1;
+        typeMetaMap[iv.type].totalTypeLines += (iv.lineCount || 1);
+      }
+      // Build sorted arrays per type for occurrence index lookup
+      for (const key of Object.keys(typeMetaMap)) {
+        typeMetaMap[key].sorted = validIntervals
+          .filter(iv => iv.type === key)
+          .sort((a, b) => a.lineNumber - b.lineNumber);
+      }
+      // Build interval-based range decorations (one per interval, not per line)
+      const intervalDecorations = validIntervals.map(iv => {
         const startLn = iv.lineNumber + 1;
         const endLn = Math.min(iv.lineNumber + iv.lineCount, lineCount);
         const endCol = Math.max(1, model.getLineMaxColumn(endLn));
+        // Build hover tooltip matching HighlightSelector format
+        const ht = (highlightTypes || []).find(h => h.type === iv.type);
+        const displayLabel = ht
+          ? (ht.label || '').replace(/^Simularities_/i, '').replace(/\.dat$/i, '')
+          : iv.type;
+        const meta = typeMetaMap[iv.type];
+        const occIdx = meta ? meta.sorted.indexOf(iv) + 1 : 0;
+        const total = meta ? meta.intervalCount : 0;
+        const totalTypeLines = meta ? meta.totalTypeLines : 0;
+        const pct = lineCount > 0 ? ((totalTypeLines / lineCount) * 100).toFixed(1) : '0.0';
+        const positionText = (occIdx > 0 && total > 0)
+          ? ` — at ${occIdx} of ${total.toLocaleString()}`
+          : '';
+        const hoverText = total > 0
+          ? `${displayLabel}${positionText}  \n${total.toLocaleString()} occurrence${total !== 1 ? 's' : ''}, ${totalTypeLines.toLocaleString()} line${totalTypeLines !== 1 ? 's' : ''} (${pct}% of file)`
+          : `${displayLabel} — no hits`;
         return {
           range: new monaco.Range(startLn, 1, endLn, endCol),
           options: {
             isWholeLine: true,
             className: `highlight-line-${iv.type}`,
+            hoverMessage: { value: hoverText },
           }
         };
       });
