@@ -493,11 +493,11 @@ function App() {
   }, [userId]); // stable deps only — highlightTypes/currentServerFile accessed via refs
 
   // Provide a stable handler for virtualized line requests (moved out of JSX)
-  const handleRequestLines = useCallback(async (start, end) => {
+  const handleRequestLines = useCallback(async (start, end, signal) => {
     try {
       if (!currentServerFile || !fileMeta) return [];
       const len = end - start;
-      const res = await fetchFileLines(currentServerFile.fileName, userId, start, fileMeta.numberOfLines, len);
+      const res = await fetchFileLines(currentServerFile.fileName, userId, start, fileMeta.numberOfLines, len, { signal });
       const text = (res && res.text) ? res.text : '';
       let lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
 

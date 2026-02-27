@@ -147,7 +147,7 @@ export function UploadLogFile(file, userId) {
 }
 
 export const fetchFileLines = async (fileName, userId, startLine, fileSize, numberOfLines, options = {}) => {
-  const { similaritiesOnly = false } = options || {};
+  const { similaritiesOnly = false, signal = undefined } = options || {};
   if (startLine >= fileSize) {
     console.error('position >= fileSize', startLine, fileSize);
     return { text: '', start: startLine, size: 0 };
@@ -156,6 +156,7 @@ export const fetchFileLines = async (fileName, userId, startLine, fileSize, numb
     try {
       const response = await axios.get(`${backendUrl}/api/file/getlines/${fileName}`, {
         params: { start: startLine, size: numberOfLines, userId: userId, similaritiesOnly: similaritiesOnly ? 1 : 0 },
+        signal: signal,
       });
       const endTime = Date.now();
       //console.log(`fetchFileLines: getlines call took ${endTime - startTime} ms`);

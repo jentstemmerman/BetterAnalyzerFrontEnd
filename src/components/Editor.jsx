@@ -38,6 +38,7 @@ function Editor({
   const requestInflightRef = useRef(0);
   // Replaces requestVersionRef: now a "viewport generation" incremented once per viewport change
   const generationRef = useRef(0);
+  const abortControllerRef = useRef(null); // abort stale fetch requests on viewport change
   const decorationRefreshRafRef = useRef(0);
   const updateDecorationsRef = useRef(null);
 
@@ -65,11 +66,13 @@ function Editor({
     pendingChunksRef.current.add(chunkIdx);
     requestInflightRef.current += 1;
     const myGeneration = generation;
+    // Grab the current abort signal so it can be cancelled if viewport moves on
+    const signal = abortControllerRef.current ? abortControllerRef.current.signal : undefined;
 
     console.log('[virtual] loading chunk', { chunkIdx, start, end, generation: myGeneration, inflight: requestInflightRef.current });
 
     try {
-      const lines = await onRequestLines(start, end);
+      const lines = await onRequestLines(start, end, signal);
       // Previous logic aborted applying a chunk if the viewport generation advanced.
       // That led to permanent blank regions if the user kept scrolling (chunk kept
       // returning as stale and its placeholder blank lines remained). We now allow
@@ -125,7 +128,11 @@ function Editor({
         scheduleDecorationRefresh('chunk:' + chunkIdx);
       }
     } catch (e) {
-      console.warn('[virtual] failed loading chunk', chunkIdx, e);
+      if (e && (e.name === 'AbortError' || e.name === 'CanceledError')) {
+        console.log('[virtual] chunk request cancelled (viewport moved on)', { chunkIdx });
+      } else {
+        console.warn('[virtual] failed loading chunk', chunkIdx, e);
+      }
     } finally {
       pendingChunksRef.current.delete(chunkIdx);
       requestInflightRef.current -= 1;
@@ -163,7 +170,11 @@ function Editor({
     }
     lastViewportRef.current = { start: bufferedStart, end: bufferedEnd };
 
-    // New viewport cycle: bump generation once (not per chunk)
+    // New viewport cycle: abort all in-flight requests from the previous generation
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
     const gen = ++generationRef.current;
   ensureRangeLoaded(bufferedStart, bufferedEnd, gen);
 
