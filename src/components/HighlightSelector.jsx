@@ -1,6 +1,27 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState, useRef, useEffect } from 'react';
 
-function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreateGroup, showColorManager, onToggleColors, hitCounts, totalLines, docIntervals, onNavigateToLine, cursorLine }) {
+function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreateGroup, showColorManager, onToggleColors, hitCounts, totalLines, docIntervals, onNavigateToLine, cursorLine, removedSignatures, onRestoreSignature }) {
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const addMenuRef = useRef(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!showAddMenu) return;
+    const handleClick = (e) => {
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target)) {
+        setShowAddMenu(false);
+      }
+    };
+    const handleKey = (e) => {
+      if (e.key === 'Escape') setShowAddMenu(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [showAddMenu]);
   // Compute sorted intervals for a given type
   const getSortedIntervals = useCallback((type) => {
     if (!docIntervals) return [];
@@ -114,12 +135,39 @@ function HighlightSelector({ highlightTypes, active, onToggle, onRemove, onCreat
           </button>
         );
       })}
+      {removedSignatures && removedSignatures.length > 0 && (
+        <div className="add-signature-wrapper" ref={addMenuRef}>
+          <button
+            className="create-group-btn add-signature-btn"
+            onClick={() => setShowAddMenu(v => !v)}
+            title="Re-add a previously removed signature"
+            aria-expanded={showAddMenu}
+          >+ Add Signature</button>
+          {showAddMenu && (
+            <div className="add-signature-dropdown">
+              {removedSignatures.map(rs => (
+                <button
+                  key={rs.signatureName}
+                  className="add-signature-item"
+                  onClick={() => {
+                    onRestoreSignature(rs.signatureName);
+                    if (removedSignatures.length <= 1) setShowAddMenu(false);
+                  }}
+                  title={`Re-add ${rs.cleanName}`}
+                >
+                  {rs.cleanName}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {onCreateGroup && (
         <button
           className="create-group-btn"
           onClick={onCreateGroup}
           title="Create a new highlight group from the current selection"
-        >+ Create Group</button>
+        >+ Create Signature</button>
       )}
       {onToggleColors && (
         <button

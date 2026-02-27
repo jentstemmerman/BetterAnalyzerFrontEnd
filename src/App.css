@@ -238,6 +238,48 @@
   background: color-mix(in srgb, var(--accent) 30%, var(--bg));
 }
 
+/* Add-Signature dropdown wrapper & menu */
+.add-signature-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+.add-signature-btn {
+  border-style: dashed;
+}
+.add-signature-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 180px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+.add-signature-item {
+  padding: 6px 14px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  text-align: left;
+  font-size: 0.9rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.add-signature-item:hover {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+}
+.add-signature-item:active {
+  background: color-mix(in srgb, var(--accent) 30%, var(--bg));
+}
+
 /* Remove (X) icon inside highlight buttons */
 .remove-highlight-icon {
   width: 14px;

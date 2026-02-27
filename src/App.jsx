@@ -51,6 +51,8 @@ function App() {
   const similarityScoresRef = React.useRef(new Map());
   // Track which highlight types are currently being re-packed on the server
   const [repackingTypes, setRepackingTypes] = useState(new Set());
+  // Track removed annotation signatures so the user can re-add them
+  const [removedSignatures, setRemovedSignatures] = useState([]);
 
   const handleHighlightToggle = (type) => {
     setActiveHighlights(prev =>
@@ -127,10 +129,54 @@ function App() {
       const confirmed = window.confirm(`Remove base highlight group "${type}"? This will delete its highlights.`);
       if (!confirmed) return;
     }
-    setHighlightTypes(prev => prev.filter(ht => ht.type !== type));
+    // If this is an annotation type, remember it so the user can re-add it later
+    setHighlightTypes(prev => {
+      const removed = prev.find(ht => ht.type === type);
+      if (removed && removed.origin === 'annotation' && removed.signatureName) {
+        setRemovedSignatures(rs => {
+          if (rs.some(r => r.signatureName === removed.signatureName)) return rs;
+          return [...rs, { signatureName: removed.signatureName, cleanName: removed.label }];
+        });
+      }
+      return prev.filter(ht => ht.type !== type);
+    });
     setActiveHighlights(prev => prev.filter(t => t !== type));
     setDocHighlights(prev => prev.filter(h => h.type !== type));
+    setDocIntervals(prev => prev.filter(iv => iv.type !== type));
   }, []);
+
+  const restoreSignature = useCallback(async (signatureName) => {
+    if (!currentServerFile || !currentServerFile.fileName) return;
+    try {
+      const annotations = await fetchAnnotations(currentServerFile.fileName, userId, signatureName);
+      if (!annotations || !annotations.length) {
+        console.warn('No annotations returned for', signatureName);
+        return;
+      }
+      const cleanName = signatureName.replace(/\.dat$/i, '').replace(/^Simularities_/i, '');
+      const slugBase = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'annotation';
+      // Avoid slug collisions with existing types
+      setHighlightTypes(prev => {
+        const usedTypes = new Set(prev.map(t => t.type));
+        let slug = `ann-${slugBase}`;
+        let ci = 1;
+        while (usedTypes.has(slug)) slug = `ann-${slugBase}-${ci++}`;
+        const savedPrefs = savedSettingsRef.current?.signaturePreferences?.[cleanName];
+        const color = savedPrefs?.color || nextDistinctColor();
+        const threshold = savedPrefs?.threshold ?? DEFAULT_SIMILARITY_THRESHOLD;
+        const newType = { type: slug, label: cleanName, color, threshold, origin: 'annotation', signatureName };
+        // Add intervals
+        const newIntervals = annotations.map(({ lineNumber, lineCount }) => ({ lineNumber, lineCount, type: slug }));
+        setDocIntervals(pi => [...pi, ...newIntervals]);
+        setActiveHighlights(ah => [...ah, slug]);
+        return [...prev, newType];
+      });
+      // Remove from removedSignatures list
+      setRemovedSignatures(rs => rs.filter(r => r.signatureName !== signatureName));
+    } catch (e) {
+      console.error('Failed to restore signature:', signatureName, e);
+    }
+  }, [currentServerFile, userId]);
 
   const updateHighlightColor = useCallback((type, color) => {
     // Basic hex normalization (#RRGGBB only)
@@ -329,6 +375,7 @@ function App() {
     setDocIntervals([]);
   setHighlightTypes([]);
   setActiveHighlights([]);
+    setRemovedSignatures([]);
     // Reset similarity mapping per new file
     simTypeMapRef.current = new Map();
     similarityScoresRef.current = new Map();
@@ -648,6 +695,8 @@ function App() {
           docIntervals={docIntervals}
           onNavigateToLine={navigateToLine}
           cursorLine={cursorLine}
+          removedSignatures={removedSignatures}
+          onRestoreSignature={restoreSignature}
         />
       </div>
       {showColorManager && (
