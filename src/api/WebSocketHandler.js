@@ -15,10 +15,11 @@ export class WebSocketHandler {
   async _connect() {
     try {
       const io = await getSocketIO();
-      // Namespace optional; if server uses same origin with socketio default path
+      // Read JWT from sessionStorage (set by AuthContext)
+      const token = sessionStorage.getItem('auth_access') || '';
       this._socket = io(this.baseUrl, {
         transports: ['websocket'],
-        query: { userId: String(this.userId) },
+        auth: { token },
         timeout: 15000,
       });
       this._socket.on('connect', () => { this._connected = true; });
@@ -27,9 +28,8 @@ export class WebSocketHandler {
       // Listen for server progress events
       this._socket.on('analyze_file_progress', (payload) => {
         if (!payload) return;
-        const { fileName, userId, progress, status, error } = payload;
-        // Basic validation: must match this user
-        if (String(userId) !== String(this.userId)) return;
+        const { fileName, progress, status, error } = payload;
+        // Server routes events to user-specific rooms, no client-side userId filtering needed
         const progressUpdate = { fileName, pct: progress, status, error: error || null, message: status };
         // External setter from library AnalyzeFileProgressUpdate
         if (this.setProgressUpdate) {
@@ -43,6 +43,12 @@ export class WebSocketHandler {
     } catch (e) {
       console.warn('[socket] failed to init', e);
     }
+  }
+
+  /** Reconnect with a fresh token (call after token refresh). */
+  reconnect() {
+    this.close();
+    this._connect();
   }
 
   close() {

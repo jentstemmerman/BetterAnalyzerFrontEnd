@@ -1,2 +1,4 @@
 // Global constants placeholder. Adjust backendUrl for environments.
-export const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://192.168.1.45:5000';
+// In Docker, the React app is served by Nginx on the same origin,
+// so an empty string (relative URLs) works. During development use the full URL.
+export const backendUrl = process.env.REACT_APP_BACKEND_URL || '';

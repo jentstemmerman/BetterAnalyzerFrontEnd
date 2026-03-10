@@ -6,6 +6,8 @@ import HighlightSelector from './components/HighlightSelector';
 import DocumentSelector from './components/DocumentSelector';
 import { GetServerDirectoryListing, getMetadata, fetchFileLines, AnalyzeFile, CreateSignatureOnServer, fetchAnnotations, GetServerSignatureData, repackSimilarity, getUserSettings, saveUserSettings } from './api/library';
 import { getSocketIO } from './api/socketioClient';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import LoginPage from './components/LoginPage';
 
 const exampleDocuments = [
   {
@@ -21,6 +23,8 @@ const exampleDocuments = [
 const baseHighlightTypes = [];
 
 function App() {
+  const { user, isAuthenticated, loading: authLoading, logout } = useAuth();
+  const userId = user?.userId ?? 0;
   const [selectedDocIdx, setSelectedDocIdx] = useState(0);
   const [highlightTypes, setHighlightTypes] = useState(baseHighlightTypes);
   const [activeHighlights, setActiveHighlights] = useState([]);
@@ -35,7 +39,6 @@ function App() {
   const [minimapWidth, setMinimapWidth] = useState(15);
   const [serverEntries, setServerEntries] = useState([]); // array of {fileName,filePath,isDirectory}
   const [loadingFiles, setLoadingFiles] = useState(false);
-  const [userId] = useState(0); // TODO: replace with real user context
   const [currentServerFile, setCurrentServerFile] = useState(null); // entry object
   const [currentServerIndex, setCurrentServerIndex] = useState(-1);
   const [fileMeta, setFileMeta] = useState(null); // { size, numberOfLines }
@@ -568,7 +571,8 @@ function App() {
         if (cancelled || !io) return;
         const { backendUrl } = await import('./Constants');
         if (cancelled) return;
-        socket = io(backendUrl, { transports: ['websocket', 'polling'] });
+        const token = sessionStorage.getItem('auth_access') || '';
+        socket = io(backendUrl, { transports: ['websocket', 'polling'], auth: { token } });
         socket.on('repack_complete', handler);
       } catch (e) {
         console.warn('Failed to open socket for repack_complete listener:', e);
@@ -610,6 +614,14 @@ function App() {
       return [];
     }
   }, [currentServerFile, fileMeta, userId]);
+
+  // ---- Auth guard: show login page if not authenticated ----
+  if (authLoading) {
+    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', color: 'var(--text-soft)' }}>Loading…</div>;
+  }
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
 
   return (
     <div className="app-container">
@@ -679,6 +691,12 @@ function App() {
             onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
             aria-label="Toggle dark mode"
           >{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</button>
+          <button
+            className="theme-toggle-btn"
+            onClick={logout}
+            aria-label="Sign out"
+            style={{ marginLeft: 4 }}
+          >Sign Out</button>
         </div>
       </header>
       <div className="highlight-selector-wrapper layout-row">
@@ -813,4 +831,13 @@ function App() {
   );
 }
 
-export default App;
+// Wrap App with AuthProvider at the module export level
+function AppWithAuth() {
+  return (
+    <AuthProvider>
+      <App />
+    </AuthProvider>
+  );
+}
+
+export default AppWithAuth;

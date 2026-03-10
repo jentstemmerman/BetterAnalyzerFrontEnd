@@ -7,6 +7,95 @@ import { WebSocketHandler } from './WebSocketHandler';
 
 const webSocketHandlers = new Map();
 
+// ---- Auth helpers ----
+// These read from sessionStorage to avoid a circular dependency with AuthContext.
+// AuthContext writes tokens to sessionStorage on login/refresh.
+function getAccessToken() {
+  return sessionStorage.getItem('auth_access') || null;
+}
+
+function getRefreshToken() {
+  return sessionStorage.getItem('auth_refresh') || null;
+}
+
+/** Try to refresh the access token using the stored refresh token. */
+async function tryRefreshToken() {
+  const rt = getRefreshToken();
+  if (!rt) return null;
+  try {
+    const res = await axios.post(`${backendUrl}/api/auth/refresh`, { refresh_token: rt });
+    const newAccess = res.data.access_token;
+    sessionStorage.setItem('auth_access', newAccess);
+    return newAccess;
+  } catch (err) {
+    // Only clear auth on definitive auth failures (401), not server errors (500)
+    if (err?.response?.status === 401) {
+      sessionStorage.removeItem('auth_access');
+      sessionStorage.removeItem('auth_refresh');
+      sessionStorage.removeItem('auth_user');
+      window.location.reload();
+    }
+    return null;
+  }
+}
+
+// ---- Axios interceptors ----
+// Attach Authorization header to every outgoing request
+axios.interceptors.request.use((config) => {
+  // Skip auth header for login/refresh endpoints
+  const url = config.url || '';
+  if (url.includes('/api/auth/login') || url.includes('/api/auth/refresh')) return config;
+  const token = getAccessToken();
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers['Authorization'] = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// On 401, attempt a single token refresh then retry the original request
+let _isRefreshing = false;
+let _refreshQueue = [];
+
+axios.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    const url = originalRequest?.url || '';
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retried &&
+      !url.includes('/api/auth/login') &&
+      !url.includes('/api/auth/refresh')
+    ) {
+      if (_isRefreshing) {
+        // Queue until the in-flight refresh resolves
+        return new Promise((resolve, reject) => {
+          _refreshQueue.push({ resolve, reject });
+        }).then((newToken) => {
+          originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
+          return axios(originalRequest);
+        });
+      }
+      originalRequest._retried = true;
+      _isRefreshing = true;
+      const newToken = await tryRefreshToken();
+      _isRefreshing = false;
+      if (newToken) {
+        _refreshQueue.forEach(({ resolve }) => resolve(newToken));
+        _refreshQueue = [];
+        originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
+        return axios(originalRequest);
+      } else {
+        _refreshQueue.forEach(({ reject }) => reject(error));
+        _refreshQueue = [];
+        return Promise.reject(error);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 // ---- Float16 (half) decoding utilities ----
 // Converts a 16-bit half-precision float (Uint16) to a JS Number
 function halfToNumber(h) {
@@ -133,10 +222,11 @@ export function UploadLogFile(file, userId) {
   if (file) {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('userId', userId);
+    const token = getAccessToken();
     fetch(`${backendUrl}/api/uploadLogFile`, {
       method: 'POST',
       body: formData,
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
     })
       .then((response) => response.json())
       .then((data) => console.log('File uploaded successfully:', data))
@@ -155,7 +245,7 @@ export const fetchFileLines = async (fileName, userId, startLine, fileSize, numb
     const startTime = Date.now();
     try {
       const response = await axios.get(`${backendUrl}/api/file/getlines/${fileName}`, {
-        params: { start: startLine, size: numberOfLines, userId: userId, similaritiesOnly: similaritiesOnly ? 1 : 0 },
+        params: { start: startLine, size: numberOfLines, similaritiesOnly: similaritiesOnly ? 1 : 0 },
         signal: signal,
       });
       const endTime = Date.now();
@@ -185,7 +275,7 @@ export const fetchFileLines = async (fileName, userId, startLine, fileSize, numb
 export const checkAnnotations = async (fileName, userId, annotation_id) => {
   try {
     const response = await axios.get(`${backendUrl}/api/file/checkannotations/${fileName}`, {
-      params: { annotation_id: annotation_id, userId: userId },
+      params: { annotation_id: annotation_id },
     });
     return response.data.annotations_exists;
   } catch (error) {
@@ -196,8 +286,12 @@ export const checkAnnotations = async (fileName, userId, annotation_id) => {
 
 export const fetchAnnotations = async (fileName, userId, signatureName) => {
   try {
+    const token = getAccessToken();
     const response = await fetch(
-      `${backendUrl}/api/file/getannotations/${fileName}/${signatureName}?userId=${userId}`
+      `${backendUrl}/api/file/getannotations/${fileName}/${signatureName}`,
+      {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      }
     );
     if (!response.ok) {
       const err = await response.json().catch(() => ({ error: response.statusText }));
@@ -225,7 +319,7 @@ export const fetchAnnotations = async (fileName, userId, signatureName) => {
 export const getMetadata = async (fileName, userId) => {
   try {
     const response = await axios.get(`${backendUrl}/api/file/meta/${fileName}`, {
-      params: { userId: userId },
+      params: {},
     });
     return { size: response.data.size, numberOfLines: response.data.numberOfLines };
   } catch (error) {
@@ -251,7 +345,7 @@ export const AnalyzeFile = async (fileName, userId, progressUpdate) => {
       };
     }
     axios.get(requestString, {
-      params: { userId: userId, modelDirectory: 'model', tokenDirectory: 'TokenDirectory_1' },
+      params: { modelDirectory: 'model', tokenDirectory: 'TokenDirectory_1' },
     });
     return null;
   } catch (error) {
@@ -270,7 +364,7 @@ const AnalyzeFileProgressUpdate = async (fileName, userId, progressUpdate) => {
 export const PostProcessLogFiles = async (fileName, userId, similaritythreshold, OnPostProcessLogFilesUpdateHandler) => {
   try {
     const response = await axios.get(`${backendUrl}/api/PostProcessLogFiles`, {
-      params: { userId: userId, fileName: fileName, similaritythreshold: similaritythreshold },
+      params: { fileName: fileName, similaritythreshold: similaritythreshold },
     });
     return response.data.started;
   } catch (error) {
@@ -294,7 +388,6 @@ export const repackSimilarity = async (fileName, userId, signatureName, threshol
   try {
     const response = await axios.post(`${backendUrl}/api/file/repack_similarity`, {
       fileName,
-      userId,
       signatureName,
       threshold,
     });
@@ -316,7 +409,7 @@ export const closeWebSocketHandler = (fileName) => {
 export const GetServerDirectoryListing = async (userId = 0, path = '', directoryType = ServerDirectoryType.LogDirType) => {
   try {
     const response = await axios.get(`${backendUrl}/api/get_directory_listing`, {
-      params: { path, directoryType, userId },
+      params: { path, directoryType },
     });
     // Expecting response.data to be an array of { fileName, filePath, isDirectory }
     if (Array.isArray(response.data)) return response.data;
@@ -330,7 +423,7 @@ export const GetServerDirectoryListing = async (userId = 0, path = '', directory
 export const GetServerSignatureData = async (userId) => {
   try {
     const response = await axios.get(`${backendUrl}/api/signature_files`, {
-      params: { userId: userId },
+      params: {},
     });
     const signatureDataList = response.data;
     const signatureNames = signatureDataList.map((file) => file.fileName);
@@ -347,15 +440,16 @@ export function CreateSignatureOnServer(signature_name, logFileName, path, userI
     const formData = new FormData();
     console.log('CreateSignatureOnServer signature_name ', signature_name);
     formData.append('signature_name', signature_name);
-    formData.append('userId', userId);
     formData.append('modelDirectory', 'model');
     formData.append('path', path);
     formData.append('logFileName', logFileName);
     formData.append('selectedTextForSignature', JSON.stringify(selectedTextForSignature));
 
+    const token = getAccessToken();
     fetch(`${backendUrl}/api/createSignatureFile`, {
       method: 'POST',
       body: formData,
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
     })
       .then((response) => response.json())
       .then((data) => {
@@ -376,7 +470,7 @@ export function CreateSignatureOnServer(signature_name, logFileName, path, userI
 
 export const getUserSettings = async (userId) => {
   try {
-    const response = await axios.get(`${backendUrl}/api/settings/${userId}`);
+    const response = await axios.get(`${backendUrl}/api/settings`);
     return (response.data && response.data.settings) ? response.data.settings : null;
   } catch (error) {
     // 404 = no settings file yet, not a real error
@@ -388,7 +482,7 @@ export const getUserSettings = async (userId) => {
 
 export const saveUserSettings = async (userId, settings) => {
   try {
-    await axios.post(`${backendUrl}/api/settings/${userId}`, { settings });
+    await axios.post(`${backendUrl}/api/settings`, { settings });
   } catch (error) {
     console.error('saveUserSettings failed:', error);
   }
